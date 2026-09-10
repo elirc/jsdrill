@@ -6,9 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "db:seed": "npx tsx src/lib/db/seed.ts",
-    "db:reset": "rm -f reps.db && npx tsx src/lib/db/seed.ts"
+    "lint": "eslint src scripts",
+    "typecheck": "tsc --noEmit",
+    "content:check": "tsx scripts/check-content.ts",
+    "db:seed": "tsx src/lib/db/seed.ts",
+    "db:reset": "node -e \"for (const f of ['reps.db','reps.db-wal','reps.db-shm']) require('fs').rmSync(f,{force:true})\" && tsx src/lib/db/seed.ts",
+    "check": "npm run typecheck && npm run lint && npm run content:check"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.0",
@@ -39,5 +42,6 @@
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"
-  }
+  },
+  "description": "Spaced-repetition interview drills for full-stack developers: JS, TS, React, Node, C#, .NET, SQL and the web."
 }

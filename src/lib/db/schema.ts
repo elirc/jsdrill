@@ -1,53 +1,88 @@
-import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey, index } from "drizzle-orm/sqlite-core";
 
-// ─── Categories ───
-export const categories = sqliteTable("categories", {
+// ─── Tracks (technologies: JavaScript, React, .NET, …) ───
+export const tracks = sqliteTable("tracks", {
   id: text("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
+  tagline: text("tagline").notNull().default(""),
   description: text("description").notNull().default(""),
   icon: text("icon").notNull().default(""),
+  color: text("color").notNull().default("#6366f1"),
   sortOrder: integer("sort_order").notNull().default(0),
 });
 
-// ─── Patterns ───
-export const patterns = sqliteTable("patterns", {
+// ─── Modules (a teachable unit inside a track, at one level) ───
+export const modules = sqliteTable(
+  "modules",
+  {
+    id: text("id").primaryKey(),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    level: integer("level").notNull().default(1),
+    summary: text("summary").notNull().default(""),
+    brief: text("brief").notNull().default(""),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("modules_track_idx").on(t.trackId, t.level, t.sortOrder)]
+);
+
+// ─── Concepts (cross-cutting tags: closures, DI, N+1, CORS, …) ───
+export const concepts = sqliteTable("concepts", {
   id: text("id").primaryKey(),
-  name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
   description: text("description").notNull().default(""),
   explanation: text("explanation").notNull().default(""),
 });
 
-// ─── Problems ───
-export const problems = sqliteTable("problems", {
-  id: text("id").primaryKey(),
-  title: text("title").notNull(),
-  description: text("description").notNull(),
-  starterCode: text("starter_code").notNull(),
-  solutionCode: text("solution_code").notNull().default(""),
-  testCases: text("test_cases").notNull().default("[]"), // JSON
-  tier: integer("tier").notNull().default(1),
-  categoryId: text("category_id").notNull().references(() => categories.id),
-  authorId: text("author_id"), // null = system problem
-  hints: text("hints").notNull().default("[]"), // JSON
-  timeLimit: integer("time_limit").notNull().default(300), // seconds
-  isPublished: integer("is_published", { mode: "boolean" }).notNull().default(true),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
-});
-
-// ─── Problem ↔ Pattern (many-to-many) ───
-export const problemPatterns = sqliteTable(
-  "problem_patterns",
+// ─── Items (a single drill of any kind) ───
+export const items = sqliteTable(
+  "items",
   {
-    problemId: text("problem_id")
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    trackId: text("track_id")
       .notNull()
-      .references(() => problems.id, { onDelete: "cascade" }),
-    patternId: text("pattern_id")
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    moduleId: text("module_id")
       .notNull()
-      .references(() => patterns.id, { onDelete: "cascade" }),
+      .references(() => modules.id, { onDelete: "cascade" }),
+    level: integer("level").notNull().default(1),
+    prompt: text("prompt").notNull(),
+    code: text("code"),
+    lang: text("lang"),
+    payload: text("payload").notNull().default("{}"), // JSON, shape depends on kind
+    explanation: text("explanation").notNull().default(""),
+    interviewTip: text("interview_tip"),
+    estSeconds: integer("est_seconds").notNull().default(45),
+    difficulty: integer("difficulty").notNull().default(1),
+    authorId: text("author_id"), // null = built-in curriculum
+    isPublished: integer("is_published", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.problemId, table.patternId] })]
+  (t) => [
+    index("items_module_idx").on(t.moduleId),
+    index("items_track_level_idx").on(t.trackId, t.level),
+  ]
+);
+
+// ─── Item ↔ Concept (many-to-many) ───
+export const itemConcepts = sqliteTable(
+  "item_concepts",
+  {
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    conceptId: text("concept_id")
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.itemId, t.conceptId] })]
 );
 
 // ─── Users ───
@@ -55,117 +90,118 @@ export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
-  dailyGoal: integer("daily_goal").notNull().default(10),
+  /** Items per day. */
+  dailyGoal: integer("daily_goal").notNull().default(20),
   streakCount: integer("streak_count").notNull().default(0),
+  longestStreak: integer("longest_streak").notNull().default(0),
+  lastActiveDate: text("last_active_date"),
+  /** Free-text goal, e.g. "junior full-stack .NET + React". */
+  targetRole: text("target_role").notNull().default(""),
   settings: text("settings").notNull().default("{}"), // JSON
   createdAt: text("created_at").notNull(),
 });
 
 // ─── Attempts ───
-export const attempts = sqliteTable("attempts", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  problemId: text("problem_id")
-    .notNull()
-    .references(() => problems.id),
-  code: text("code").notNull(),
-  approachText: text("approach_text").notNull().default(""),
-  passed: integer("passed", { mode: "boolean" }).notNull().default(false),
-  timeSpent: integer("time_spent").notNull().default(0), // seconds
-  timedMode: integer("timed_mode", { mode: "boolean" }).notNull().default(false),
-  errorType: text("error_type"),
-  createdAt: text("created_at").notNull(),
-});
-
-// ─── FSRS User Cards (one per user×problem) ───
-export const userCards = sqliteTable("user_cards", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  problemId: text("problem_id")
-    .notNull()
-    .references(() => problems.id),
-  stability: real("stability").notNull().default(0),
-  difficulty: real("difficulty").notNull().default(0),
-  due: text("due").notNull(),
-  reps: integer("reps").notNull().default(0),
-  lapses: integer("lapses").notNull().default(0),
-  state: integer("state").notNull().default(0), // 0=New, 1=Learning, 2=Review, 3=Relearning
-  lastReview: text("last_review"),
-});
-
-// ─── User Tier Progress (one per user×category) ───
-export const userTierProgress = sqliteTable("user_tier_progress", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  categoryId: text("category_id")
-    .notNull()
-    .references(() => categories.id),
-  currentTier: integer("current_tier").notNull().default(1),
-  tierUnlockedAt: text("tier_unlocked_at").notNull(),
-  consecutivePass: integer("consecutive_pass").notNull().default(0),
-  lastDecayCheck: text("last_decay_check").notNull(),
-});
-
-// ─── User Problem Versions (forks of system problems) ───
-export const userProblemVersions = sqliteTable("user_problem_versions", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  originalProblemId: text("original_problem_id")
-    .notNull()
-    .references(() => problems.id),
-  title: text("title").notNull(),
-  description: text("description").notNull(),
-  starterCode: text("starter_code").notNull(),
-  solutionCode: text("solution_code").notNull().default(""),
-  testCases: text("test_cases").notNull().default("[]"),
-  hints: text("hints").notNull().default("[]"),
-  notes: text("notes").notNull().default(""),
-  createdAt: text("created_at").notNull(),
-  updatedAt: text("updated_at").notNull(),
-});
-
-// ─── Shared Items ───
-export const sharedItems = sqliteTable("shared_items", {
-  id: text("id").primaryKey(),
-  shareCode: text("share_code").notNull().unique(),
-  ownerId: text("owner_id")
-    .notNull()
-    .references(() => users.id),
-  itemType: text("item_type").notNull(), // "problem" | "problem_set"
-  itemId: text("item_id").notNull(),
-  createdAt: text("created_at").notNull(),
-});
-
-// ─── Problem Sets ───
-export const problemSets = sqliteTable("problem_sets", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  name: text("name").notNull(),
-  description: text("description").notNull().default(""),
-  createdAt: text("created_at").notNull(),
-});
-
-// ─── Problem Set Items ───
-export const problemSetItems = sqliteTable(
-  "problem_set_items",
+export const attempts = sqliteTable(
+  "attempts",
   {
-    problemSetId: text("problem_set_id")
+    id: text("id").primaryKey(),
+    userId: text("user_id")
       .notNull()
-      .references(() => problemSets.id, { onDelete: "cascade" }),
-    problemId: text("problem_id")
+      .references(() => users.id),
+    itemId: text("item_id")
       .notNull()
-      .references(() => problems.id, { onDelete: "cascade" }),
-    sortOrder: integer("sort_order").notNull().default(0),
+      .references(() => items.id, { onDelete: "cascade" }),
+    /** The learner's submission, JSON-encoded `Response`. */
+    response: text("response").notNull().default("{}"),
+    correct: integer("correct", { mode: "boolean" }).notNull().default(false),
+    score: real("score").notNull().default(0),
+    timeSpent: integer("time_spent").notNull().default(0), // seconds
+    /** "mixed" | "track" | "module" | "level" | "weak" | "interview" */
+    mode: text("mode").notNull().default("mixed"),
+    /** FSRS rating that resulted from this attempt. */
+    rating: integer("rating").notNull().default(3),
+    createdAt: text("created_at").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.problemSetId, table.problemId] })]
+  (t) => [
+    index("attempts_user_idx").on(t.userId, t.createdAt),
+    index("attempts_item_idx").on(t.userId, t.itemId),
+  ]
 );
+
+// ─── FSRS cards (one per user × item) ───
+export const userCards = sqliteTable(
+  "user_cards",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    stability: real("stability").notNull().default(0),
+    difficulty: real("difficulty").notNull().default(0),
+    due: text("due").notNull(),
+    reps: integer("reps").notNull().default(0),
+    lapses: integer("lapses").notNull().default(0),
+    state: integer("state").notNull().default(0), // 0=New 1=Learning 2=Review 3=Relearning
+    lastReview: text("last_review"),
+    /** Running tallies so accuracy never needs a full attempts scan. */
+    correctCount: integer("correct_count").notNull().default(0),
+    totalCount: integer("total_count").notNull().default(0),
+  },
+  (t) => [
+    index("cards_user_due_idx").on(t.userId, t.due),
+    index("cards_user_item_idx").on(t.userId, t.itemId),
+  ]
+);
+
+// ─── Per-track level progress ───
+export const userTrackProgress = sqliteTable(
+  "user_track_progress",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    currentLevel: integer("current_level").notNull().default(1),
+    levelUnlockedAt: text("level_unlocked_at").notNull(),
+    /** Set when the learner opts a track into their plan. */
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  },
+  (t) => [index("track_progress_user_idx").on(t.userId, t.trackId)]
+);
+
+// ─── Bookmarks ("revisit before the interview") ───
+export const bookmarks = sqliteTable(
+  "bookmarks",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    note: text("note").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.itemId] })]
+);
+
+// ─── Interview mode runs ───
+export const interviewRuns = sqliteTable("interview_runs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  /** JSON `InterviewScore`. */
+  score: text("score").notNull().default("{}"),
+  total: integer("total").notNull().default(0),
+  correct: integer("correct").notNull().default(0),
+  seconds: integer("seconds").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+});

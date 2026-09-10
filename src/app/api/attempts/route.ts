@@ -2,150 +2,125 @@ import { NextResponse } from "next/server";
 import { db, schema } from "@/lib/db";
 import { eq, and } from "drizzle-orm";
 import { generateId, now } from "@/lib/utils";
-import { createNewCard, scheduleNext, cardFromDb, cardToDb } from "@/lib/fsrs";
+import { grade } from "@/lib/grader";
+import {
+  cardFromDb,
+  cardToDb,
+  createNewCard,
+  formatInterval,
+  ratingFor,
+  scheduleNext,
+} from "@/lib/fsrs";
+import { toItem } from "@/lib/sessionBuilder";
+import { maybeUnlockNextLevel, recomputeStreak } from "@/lib/progress";
+import { LEVEL_META, type Response as DrillResponse } from "@/types";
 
 const DEFAULT_USER_ID = "default-user";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const {
-      problemId,
-      code,
-      approachText,
-      passed,
-      timeSpent,
-      timedMode,
-      errorType,
-    } = body;
+    const { itemId, response, timeSpent, mode } = body as {
+      itemId?: string;
+      response?: DrillResponse;
+      timeSpent?: number;
+      mode?: string;
+    };
 
-    if (!problemId || code === undefined) {
+    if (!itemId || !response) {
       return NextResponse.json(
-        { success: false, error: "Missing required fields" },
+        { success: false, error: "itemId and response are required" },
         { status: 400 }
       );
     }
 
+    const row = db.select().from(schema.items).where(eq(schema.items.id, itemId)).get();
+    if (!row) {
+      return NextResponse.json({ success: false, error: "Unknown item" }, { status: 404 });
+    }
+
+    const item = toItem(row);
+
+    // Re-grade server-side rather than trusting the client's verdict.
+    const verdict = grade(item, response);
+    const seconds = Math.max(0, Math.min(timeSpent ?? 0, 3600));
     const timestamp = now();
 
-    // 1. Record the attempt
-    const attempt = {
-      id: generateId(),
-      userId: DEFAULT_USER_ID,
-      problemId,
-      code,
-      approachText: approachText || "",
-      passed: !!passed,
-      timeSpent: timeSpent || 0,
-      timedMode: !!timedMode,
-      errorType: errorType || null,
-      createdAt: timestamp,
-    };
-
-    db.insert(schema.attempts).values(attempt).run();
-
-    // 2. Get or create the FSRS card for this user×problem
-    let existingCard = db
+    // ─── FSRS card ───
+    let card = db
       .select()
       .from(schema.userCards)
       .where(
-        and(
-          eq(schema.userCards.userId, DEFAULT_USER_ID),
-          eq(schema.userCards.problemId, problemId)
-        )
+        and(eq(schema.userCards.userId, DEFAULT_USER_ID), eq(schema.userCards.itemId, itemId))
       )
       .get();
 
-    // Get problem for time limit
-    const problem = db
-      .select()
-      .from(schema.problems)
-      .where(eq(schema.problems.id, problemId))
-      .get();
-
-    const timeLimit = problem?.timeLimit || 300;
-
-    if (!existingCard) {
-      // Create new card
-      const newCard = createNewCard();
-      const cardData = cardToDb(newCard);
-      existingCard = {
+    if (!card) {
+      const fresh = cardToDb(createNewCard());
+      card = {
         id: generateId(),
         userId: DEFAULT_USER_ID,
-        problemId,
-        ...cardData,
+        itemId,
+        correctCount: 0,
+        totalCount: 0,
+        ...fresh,
       };
-      db.insert(schema.userCards).values(existingCard).run();
+      db.insert(schema.userCards).values(card).run();
     }
 
-    // 3. Schedule next review via FSRS
-    const card = cardFromDb(existingCard);
-    const { card: updatedCard, rating } = scheduleNext(
-      card,
-      !!passed,
-      timeSpent || 0,
-      timeLimit,
-      !!timedMode
-    );
-    const updatedCardData = cardToDb(updatedCard);
+    const rating = ratingFor(item, verdict, seconds, card.reps);
+    const updated = scheduleNext(cardFromDb(card), rating);
+    const updatedData = cardToDb(updated);
 
     db.update(schema.userCards)
-      .set(updatedCardData)
-      .where(eq(schema.userCards.id, existingCard.id))
+      .set({
+        ...updatedData,
+        correctCount: card.correctCount + (verdict.correct ? 1 : 0),
+        totalCount: card.totalCount + 1,
+      })
+      .where(eq(schema.userCards.id, card.id))
       .run();
 
-    // 4. Update tier progress if passed
-    if (passed && problem) {
-      updateTierProgress(problem.categoryId);
-    }
+    // ─── Attempt ───
+    const attemptId = generateId();
+    db.insert(schema.attempts)
+      .values({
+        id: attemptId,
+        userId: DEFAULT_USER_ID,
+        itemId,
+        response: JSON.stringify(response),
+        correct: verdict.correct,
+        score: verdict.score,
+        timeSpent: seconds,
+        mode: mode ?? "mixed",
+        rating,
+        createdAt: timestamp,
+      })
+      .run();
+
+    // ─── Progression ───
+    const unlockedLevel = verdict.correct ? maybeUnlockNextLevel(row.trackId) : null;
+    const streak = recomputeStreak();
 
     return NextResponse.json({
       success: true,
       data: {
-        attemptId: attempt.id,
+        attemptId,
+        grade: verdict,
         rating,
-        nextDue: updatedCardData.due,
+        nextReview: formatInterval(updated),
+        dueAt: updatedData.due,
+        streak,
+        unlocked: unlockedLevel
+          ? { level: unlockedLevel, name: LEVEL_META[unlockedLevel].name }
+          : null,
       },
     });
   } catch (error) {
-    console.error("Attempt recording error:", error);
+    console.error("Attempt recording failed:", error);
     return NextResponse.json(
       { success: false, error: "Failed to record attempt" },
       { status: 500 }
     );
-  }
-}
-
-function updateTierProgress(categoryId: string) {
-  const progress = db
-    .select()
-    .from(schema.userTierProgress)
-    .where(
-      and(
-        eq(schema.userTierProgress.userId, DEFAULT_USER_ID),
-        eq(schema.userTierProgress.categoryId, categoryId)
-      )
-    )
-    .get();
-
-  if (!progress) return;
-
-  const newConsecutive = progress.consecutivePass + 1;
-
-  // Promote if 4 consecutive passes at current tier
-  if (newConsecutive >= 4 && progress.currentTier < 5) {
-    db.update(schema.userTierProgress)
-      .set({
-        currentTier: progress.currentTier + 1,
-        consecutivePass: 0,
-        tierUnlockedAt: now(),
-      })
-      .where(eq(schema.userTierProgress.id, progress.id))
-      .run();
-  } else {
-    db.update(schema.userTierProgress)
-      .set({ consecutivePass: newConsecutive })
-      .where(eq(schema.userTierProgress.id, progress.id))
-      .run();
   }
 }

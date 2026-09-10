@@ -44,3 +44,8 @@ next-env.d.ts
 *.db
 *.db-wal
 *.db-shm
+
+# local progress database
+reps.db
+reps.db-wal
+reps.db-shm

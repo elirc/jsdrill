@@ -1,37 +1,40 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+} from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from "@codemirror/language";
+import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentUnit } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 
-type CodeEditorProps = {
-  initialCode: string;
+type Props = {
+  value: string;
   onChange: (code: string) => void;
   readOnly?: boolean;
 };
 
-export function CodeEditor({ initialCode, onChange, readOnly = false }: CodeEditorProps) {
-  const editorRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
+export function CodeEditor({ value, onChange, readOnly = false }: Props) {
+  const host = useRef<HTMLDivElement>(null);
+  const view = useRef<EditorView | null>(null);
 
+  // Keep the latest handler without re-creating the editor on every render.
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  const createEditor = useCallback(() => {
-    if (!editorRef.current) return;
-
-    // Clean up existing editor
-    if (viewRef.current) {
-      viewRef.current.destroy();
-    }
+  // Mount once. Re-creating on `value` changes would fight the user's cursor.
+  useEffect(() => {
+    if (!host.current) return;
 
     const state = EditorState.create({
-      doc: initialCode,
+      doc: value,
       extensions: [
         lineNumbers(),
         highlightActiveLine(),
@@ -39,56 +42,57 @@ export function CodeEditor({ initialCode, onChange, readOnly = false }: CodeEdit
         history(),
         bracketMatching(),
         closeBrackets(),
+        indentUnit.of("  "),
         javascript(),
         oneDark,
         syntaxHighlighting(defaultHighlightStyle),
-        keymap.of([
-          ...defaultKeymap,
-          ...historyKeymap,
-          ...closeBracketsKeymap,
-          indentWithTab,
-        ]),
+        keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) {
-            onChangeRef.current(update.state.doc.toString());
-          }
+          if (update.docChanged) onChangeRef.current(update.state.doc.toString());
         }),
         EditorView.theme({
-          "&": {
-            fontSize: "14px",
-            height: "100%",
-          },
+          "&": { fontSize: "13.5px", borderRadius: "8px" },
           ".cm-scroller": {
-            fontFamily: "var(--font-geist-mono), 'Fira Code', 'Consolas', monospace",
+            fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
+            lineHeight: "1.65",
           },
-          ".cm-content": {
-            minHeight: "200px",
-          },
+          ".cm-content": { minHeight: "180px", padding: "10px 0" },
+          ".cm-gutters": { border: "none" },
         }),
-        ...(readOnly ? [EditorState.readOnly.of(true)] : []),
       ],
     });
 
-    viewRef.current = new EditorView({
-      state,
-      parent: editorRef.current,
-    });
-  }, [initialCode, readOnly]);
+    view.current = new EditorView({ state, parent: host.current });
 
-  useEffect(() => {
-    createEditor();
     return () => {
-      if (viewRef.current) {
-        viewRef.current.destroy();
-        viewRef.current = null;
-      }
+      view.current?.destroy();
+      view.current = null;
     };
-  }, [createEditor]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Sync external value changes (moving to the next item) without
+  // clobbering the document while the user is typing.
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
+    const current = editor.state.doc.toString();
+    if (current === value) return;
+    editor.dispatch({
+      changes: { from: 0, to: current.length, insert: value },
+    });
+  }, [value]);
+
+  // Lock the document once the answer is submitted.
+  useEffect(() => {
+    view.current?.contentDOM.setAttribute("contenteditable", readOnly ? "false" : "true");
+  }, [readOnly]);
 
   return (
     <div
-      ref={editorRef}
-      className="rounded-lg overflow-hidden border border-gray-700 min-h-[200px]"
+      ref={host}
+      className="rounded-lg overflow-hidden border"
+      style={{ borderColor: "var(--border)", opacity: readOnly ? 0.75 : 1 }}
     />
   );
 }

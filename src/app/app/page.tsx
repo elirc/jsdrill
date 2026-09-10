@@ -1,244 +1,281 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
-import { SessionProgress } from "@/components/drill/SessionProgress";
-import { ProblemCard } from "@/components/drill/ProblemCard";
-import { ApproachPrompt } from "@/components/drill/ApproachPrompt";
-import { CodeEditor } from "@/components/drill/CodeEditor";
-import { TestResults } from "@/components/drill/TestResults";
-import { PostSolve } from "@/components/drill/PostSolve";
-import { executeUserCode } from "@/lib/executor";
-import type { SessionProblem, ExecutionResult, DrillPhase } from "@/types";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { Badge, Button, Card, ProgressBar, ProgressRing, Spinner } from "@/components/ui";
+import { levelLabel, masteryLabel, tint } from "@/lib/utils";
+import type { TrackProgress } from "@/types";
 
-export default function DrillPage() {
-  const [problems, setProblems] = useState<SessionProblem[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [phase, setPhase] = useState<DrillPhase>("approach");
-  const [approachText, setApproachText] = useState("");
-  const [code, setCode] = useState("");
-  const [results, setResults] = useState<ExecutionResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [sessionComplete, setSessionComplete] = useState(false);
-  const [timeElapsed, setTimeElapsed] = useState(0);
-  const [problemStartTime, setProblemStartTime] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+type PathData = {
+  tracks: TrackProgress[];
+  today: { answered: number; goal: number; due: number; streak: number; targetRole: string };
+};
 
-  const currentProblem = problems[currentIndex];
+const SESSION_SIZES = [
+  { size: 6, label: "Quick", detail: "~4 min" },
+  { size: 12, label: "Standard", detail: "~9 min" },
+  { size: 20, label: "Long", detail: "~15 min" },
+];
 
-  const startSession = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/session?size=10");
-      const json = await res.json();
-      if (json.success && json.data.length > 0) {
-        setProblems(json.data);
-        setCurrentIndex(0);
-        setPhase("approach");
-        setApproachText("");
-        setCode(json.data[0].starterCode);
-        setResults(null);
-        setSessionComplete(false);
-        setTimeElapsed(0);
-        setProblemStartTime(Date.now());
-      }
-    } catch (err) {
-      console.error("Failed to load session:", err);
-    }
-    setLoading(false);
+export default function TodayPage() {
+  const [data, setData] = useState<PathData | null>(null);
+  const [size, setSize] = useState(12);
+
+  useEffect(() => {
+    fetch("/api/path")
+      .then((r) => r.json())
+      .then((json) => json.success && setData(json.data))
+      .catch(console.error);
   }, []);
 
-  useEffect(() => {
-    startSession();
-  }, [startSession]);
+  if (!data) return <Spinner label="Loading your plan…" />;
 
-  // Timer
-  useEffect(() => {
-    if (phase === "coding" || phase === "approach") {
-      timerRef.current = setInterval(() => {
-        setTimeElapsed((t) => t + 1);
-      }, 1000);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [phase]);
+  const { today, tracks } = data;
+  const goalPct = today.goal > 0 ? (today.answered / today.goal) * 100 : 0;
+  const goalMet = today.answered >= today.goal;
 
-  const handleApproachSubmit = (text: string) => {
-    setApproachText(text);
-    setPhase("coding");
-  };
+  const started = tracks.filter((t) => t.seenItems > 0);
+  const totalItems = tracks.reduce((sum, t) => sum + t.totalItems, 0);
+  const totalSeen = tracks.reduce((sum, t) => sum + t.seenItems, 0);
 
-  const handleRunTests = () => {
-    if (!currentProblem) return;
-    const executionResults = executeUserCode(code, currentProblem.testCases);
-    setResults(executionResults);
-    setPhase("results");
-  };
-
-  const handleSubmit = async () => {
-    if (!currentProblem || !results) return;
-
-    const timeSpent = Math.floor((Date.now() - problemStartTime) / 1000);
-
-    // Record attempt via API
-    try {
-      await fetch("/api/attempts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          problemId: currentProblem.id,
-          code,
-          approachText,
-          passed: results.allPassed,
-          timeSpent,
-          timedMode: false,
-          errorType: results.errorType,
-        }),
-      });
-    } catch (err) {
-      console.error("Failed to record attempt:", err);
-    }
-
-    if (timerRef.current) clearInterval(timerRef.current);
-    setPhase("post-solve");
-  };
-
-  const handleNext = () => {
-    const nextIndex = currentIndex + 1;
-    if (nextIndex >= problems.length) {
-      setSessionComplete(true);
-      return;
-    }
-
-    setCurrentIndex(nextIndex);
-    setPhase("approach");
-    setApproachText("");
-    setCode(problems[nextIndex].starterCode);
-    setResults(null);
-    setTimeElapsed(0);
-    setProblemStartTime(Date.now());
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center space-y-3">
-          <div className="animate-spin h-8 w-8 border-4 border-indigo-500 border-t-transparent rounded-full mx-auto" />
-          <p className="text-sm text-gray-500">Building your session...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (problems.length === 0) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card padding="lg" className="text-center max-w-md">
-          <h2 className="text-xl font-bold text-gray-900 mb-2">
-            No problems available
-          </h2>
-          <p className="text-sm text-gray-600 mb-4">
-            There are no problems to practice right now. Add some via the Admin
-            panel or check back later.
-          </p>
-          <Button onClick={startSession}>Try Again</Button>
-        </Card>
-      </div>
-    );
-  }
-
-  if (sessionComplete) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card padding="lg" className="text-center max-w-md">
-          <div className="text-4xl mb-4">🎉</div>
-          <h2 className="text-xl font-bold text-gray-900 mb-2">
-            Session Complete!
-          </h2>
-          <p className="text-sm text-gray-600 mb-4">
-            You finished {problems.length} problems. Check your dashboard to see
-            your progress.
-          </p>
-          <div className="flex items-center justify-center gap-3">
-            <Button onClick={startSession}>New Session</Button>
-            <Button
-              variant="secondary"
-              onClick={() => (window.location.href = "/app/dashboard")}
-            >
-              View Dashboard
-            </Button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
+  // Suggest the least-covered started track, or the first untouched one.
+  const suggestion =
+    [...tracks].sort((a, b) => {
+      if (a.dueItems !== b.dueItems) return b.dueItems - a.dueItems;
+      return a.mastery - b.mastery;
+    })[0] ?? null;
 
   return (
-    <div className="space-y-4">
-      {/* Session progress bar */}
-      <SessionProgress
-        current={currentIndex + (phase === "post-solve" ? 1 : 0)}
-        total={problems.length}
-        timeElapsed={timeElapsed}
-      />
+    <div className="flex flex-col gap-6">
+      {/* ─── Hero: goal + start ─── */}
+      <Card raised padding="lg">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-6">
+          <ProgressRing value={goalPct} size={84} stroke={7} color={goalMet ? "var(--good)" : "var(--accent)"}>
+            <div className="text-center leading-none">
+              <div className="text-[19px] font-semibold tabular-nums" style={{ color: "var(--text)" }}>
+                {today.answered}
+              </div>
+              <div className="text-[10px] mt-0.5" style={{ color: "var(--text-faint)" }}>
+                / {today.goal}
+              </div>
+            </div>
+          </ProgressRing>
 
-      {/* Problem card */}
-      <Card>
-        <ProblemCard problem={currentProblem} />
-      </Card>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl font-semibold tracking-tight" style={{ color: "var(--text)" }}>
+                {goalMet ? "Goal hit for today" : "Today's session"}
+              </h1>
+              {today.streak > 0 && (
+                <Badge tone="warn">🔥 {today.streak} day streak</Badge>
+              )}
+            </div>
+            <p className="text-[13.5px] mt-1.5" style={{ color: "var(--text-muted)" }}>
+              {today.due > 0 ? (
+                <>
+                  <strong style={{ color: "var(--text)" }}>{today.due}</strong> item
+                  {today.due === 1 ? "" : "s"} due for review
+                  {goalMet ? "." : ", plus new material."}
+                </>
+              ) : totalSeen === 0 ? (
+                "Nothing scheduled yet — start anywhere and the algorithm takes over."
+              ) : (
+                "No reviews due. Time to take on something new."
+              )}
+            </p>
+          </div>
+        </div>
 
-      {/* Approach phase */}
-      {phase === "approach" && (
-        <Card>
-          <ApproachPrompt onSubmit={handleApproachSubmit} />
-        </Card>
-      )}
-
-      {/* Coding phase */}
-      {(phase === "coding" || phase === "results") && (
-        <div className="space-y-4">
-          <Card padding="none">
-            <CodeEditor
-              initialCode={code}
-              onChange={setCode}
-            />
-          </Card>
-
-          <div className="flex items-center justify-end gap-3">
-            <Button variant="secondary" onClick={handleRunTests}>
-              Run Tests
-            </Button>
-            {results && (
-              <Button onClick={handleSubmit}>
-                Submit
-              </Button>
-            )}
+        <div className="mt-6 pt-5 border-t flex flex-col sm:flex-row gap-3 sm:items-center" style={{ borderColor: "var(--border)" }}>
+          <div className="flex gap-1.5 p-1 rounded-lg flex-none" style={{ background: "var(--bg-inset)" }}>
+            {SESSION_SIZES.map((option) => (
+              <button
+                key={option.size}
+                type="button"
+                onClick={() => setSize(option.size)}
+                className="px-3 py-1.5 rounded-md text-[12.5px] font-medium transition-all"
+                style={{
+                  background: size === option.size ? "var(--surface)" : "transparent",
+                  color: size === option.size ? "var(--text)" : "var(--text-faint)",
+                }}
+              >
+                {option.label}
+                <span className="ml-1.5 text-[11px] opacity-60">{option.detail}</span>
+              </button>
+            ))}
           </div>
 
-          {/* Test results */}
-          {results && (
-            <Card>
-              <TestResults results={results} />
-            </Card>
-          )}
+          <Link href={`/app/drill?mode=mixed&size=${size}`} className="flex-1 sm:flex-none sm:ml-auto">
+            <Button size="lg" className="w-full sm:w-auto">
+              Start drilling →
+            </Button>
+          </Link>
         </div>
+      </Card>
+
+      {/* ─── Quick starts ─── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <QuickStart
+          href={`/app/drill?mode=weak&size=10`}
+          title="Weak spots"
+          body="Only the items you've got wrong or nearly forgotten."
+          icon="◎"
+          disabled={totalSeen < 5}
+          disabledNote="Drill a few items first"
+        />
+        <QuickStart
+          href="/app/interview"
+          title="Mock interview"
+          body="15 rapid-fire questions across every track, then a scorecard."
+          icon="◈"
+        />
+        <QuickStart
+          href="/app/path"
+          title="Pick a topic"
+          body="Read a brief and drill one module at a time."
+          icon="◱"
+        />
+      </div>
+
+      {/* ─── Suggestion ─── */}
+      {suggestion && suggestion.totalItems > 0 && (
+        <Card accent={suggestion.trackColor}>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span
+              className="h-9 w-9 rounded-lg flex items-center justify-center text-[13px] font-bold flex-none"
+              style={{ background: tint(suggestion.trackColor, 0.16), color: suggestion.trackColor }}
+            >
+              {suggestion.trackIcon}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] uppercase tracking-wider" style={{ color: "var(--text-faint)" }}>
+                Suggested next
+              </div>
+              <div className="text-[14.5px] font-medium" style={{ color: "var(--text)" }}>
+                {suggestion.trackName}
+                <span className="font-normal ml-2 text-[13px]" style={{ color: "var(--text-muted)" }}>
+                  {suggestion.dueItems > 0
+                    ? `${suggestion.dueItems} due for review`
+                    : `${levelLabel(suggestion.currentLevel)} · ${suggestion.totalItems - suggestion.seenItems} unseen`}
+                </span>
+              </div>
+            </div>
+            <Link href={`/app/drill?mode=track&trackId=${suggestion.trackId}&size=10`}>
+              <Button variant="secondary" size="sm">
+                Drill
+              </Button>
+            </Link>
+          </div>
+        </Card>
       )}
 
-      {/* Post-solve phase */}
-      {phase === "post-solve" && results && (
-        <Card>
-          <PostSolve
-            problem={currentProblem}
-            results={results}
-            approachText={approachText}
-            timeSpent={Math.floor((Date.now() - problemStartTime) / 1000)}
-            onNext={handleNext}
-            isLastProblem={currentIndex === problems.length - 1}
-          />
-        </Card>
+      {/* ─── Track overview ─── */}
+      <div>
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-[15px] font-semibold" style={{ color: "var(--text)" }}>
+            Your tracks
+          </h2>
+          <span className="text-[12.5px]" style={{ color: "var(--text-faint)" }}>
+            {totalSeen} of {totalItems} items seen
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {tracks.map((track) => (
+            <Link key={track.trackId} href={`/app/path/${track.trackSlug}`}>
+              <Card
+                className="h-full transition-all duration-150 hover:-translate-y-0.5"
+                style={{ cursor: "pointer" }}
+              >
+                <div className="flex items-start gap-3">
+                  <span
+                    className="h-8 w-8 rounded-lg flex items-center justify-center text-[12px] font-bold flex-none"
+                    style={{ background: tint(track.trackColor, 0.16), color: track.trackColor }}
+                  >
+                    {track.trackIcon}
+                  </span>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[14px] font-medium truncate" style={{ color: "var(--text)" }}>
+                        {track.trackName}
+                      </span>
+                      {track.dueItems > 0 && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-none"
+                          style={{ background: "var(--warn-soft)", color: "var(--warn)" }}
+                        >
+                          {track.dueItems}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-1 text-[11.5px]" style={{ color: "var(--text-faint)" }}>
+                      <span>{levelLabel(track.currentLevel)}</span>
+                      <span>·</span>
+                      <span>{masteryLabel(track.mastery)}</span>
+                    </div>
+
+                    <div className="mt-2.5 flex items-center gap-2.5">
+                      <ProgressBar value={track.mastery} color={track.trackColor} height={5} />
+                      <span
+                        className="text-[11px] tabular-nums flex-none w-8 text-right"
+                        style={{ color: "var(--text-faint)" }}
+                      >
+                        {track.mastery}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {started.length === 0 && (
+        <p className="text-center text-[13px] pb-4" style={{ color: "var(--text-faint)" }}>
+          Nothing seen yet — a Standard session touches several tracks so you can find your level.
+        </p>
       )}
     </div>
   );
+}
+
+function QuickStart({
+  href,
+  title,
+  body,
+  icon,
+  disabled,
+  disabledNote,
+}: {
+  href: string;
+  title: string;
+  body: string;
+  icon: string;
+  disabled?: boolean;
+  disabledNote?: string;
+}) {
+  const content = (
+    <Card
+      className="h-full transition-all duration-150"
+      style={{
+        opacity: disabled ? 0.5 : 1,
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >
+      <div className="text-[17px] mb-2" style={{ color: "var(--accent)" }}>
+        {icon}
+      </div>
+      <div className="text-[14px] font-medium" style={{ color: "var(--text)" }}>
+        {title}
+      </div>
+      <p className="text-[12.5px] mt-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+        {disabled ? disabledNote : body}
+      </p>
+    </Card>
+  );
+
+  return disabled ? content : <Link href={href}>{content}</Link>;
 }
