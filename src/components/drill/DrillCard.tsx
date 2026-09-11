@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Badge, Card, Inline, Markdown } from "@/components/ui";
 import { AnswerFor } from "./Answers";
@@ -7,12 +8,18 @@ import { ERROR_HINTS } from "@/lib/executor";
 import { levelShort, tint } from "@/lib/utils";
 import { ITEM_KIND_META, type DrillItem, type Grade, type Response } from "@/types";
 
+function moduleHref(item: DrillItem) {
+  return `/app/path/${item.trackSlug}/${item.moduleSlug}`;
+}
+
 export function DrillCard({
   item,
   response,
   onChange,
   grade,
   onSubmit,
+  revealed,
+  showPrimer,
   bookmarked,
   onBookmark,
 }: {
@@ -21,13 +28,64 @@ export function DrillCard({
   onChange: (r: Response) => void;
   grade: Grade | null;
   onSubmit: () => void;
+  revealed: boolean;
+  showPrimer: boolean;
   bookmarked: boolean;
   onBookmark: () => void;
 }) {
   const kind = ITEM_KIND_META[item.kind];
+  const primer =
+    showPrimer && item.moduleKeyIdeas && item.moduleKeyIdeas.length > 0
+      ? item.moduleKeyIdeas
+      : null;
 
   return (
     <div className="flex flex-col gap-4">
+      {/* ─── Primer (first question from a brand-new module) ─── */}
+      {primer && (
+        <Card padding="md" accent={item.trackColor} className="animate-rise">
+          <div
+            className="text-[10.5px] font-semibold uppercase tracking-wider"
+            style={{ color: item.trackColor }}
+          >
+            New topic
+          </div>
+
+          <h3 className="text-[16px] font-semibold mt-1.5" style={{ color: "var(--text)" }}>
+            {item.moduleTitle}
+          </h3>
+
+          <p className="text-[14px] leading-relaxed mt-1" style={{ color: "var(--text-muted)" }}>
+            {item.moduleSummary}
+          </p>
+
+          <ul className="mt-3 flex flex-col gap-1.5">
+            {primer.map((idea) => (
+              <li key={idea} className="flex gap-2.5">
+                <span
+                  className="mt-[7px] h-[5px] w-[5px] rounded-full flex-none"
+                  style={{ background: item.trackColor }}
+                />
+                <span
+                  className="text-[14.5px] leading-[1.6] prose-inline"
+                  style={{ color: "var(--text)" }}
+                >
+                  <Inline>{idea}</Inline>
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          <Link
+            href={moduleHref(item)}
+            className="inline-block mt-3.5 text-[12.5px] hover:underline"
+            style={{ color: item.trackColor }}
+          >
+            Read the full brief →
+          </Link>
+        </Card>
+      )}
+
       {/* ─── Header ─── */}
       <Card padding="none" accent={item.trackColor}>
         <div
@@ -39,6 +97,13 @@ export function DrillCard({
           <span className="text-[12px] truncate" style={{ color: "var(--text-faint)" }}>
             {item.moduleTitle}
           </span>
+          <Link
+            href={moduleHref(item)}
+            className="text-[12px] hover:underline whitespace-nowrap"
+            style={{ color: "var(--text-faint)" }}
+          >
+            Brief ↗
+          </Link>
 
           <div className="ml-auto flex items-center gap-2">
             {item.isReview && <Badge tone="warn">↻ Review</Badge>}
@@ -61,7 +126,7 @@ export function DrillCard({
         {/* ─── Prompt ─── */}
         <div className="px-5 py-4">
           <h2
-            className="text-[16.5px] font-medium leading-[1.6] prose-inline"
+            className="text-[18px] font-medium leading-[1.55] prose-inline"
             style={{ color: "var(--text)" }}
           >
             <Inline>{item.prompt}</Inline>
@@ -83,31 +148,38 @@ export function DrillCard({
           onChange={onChange}
           grade={grade}
           onSubmit={onSubmit}
+          revealed={revealed}
         />
       </div>
 
       {/* ─── Feedback ─── */}
-      {grade && <Feedback item={item} grade={grade} />}
+      {grade && revealed && <Feedback item={item} grade={grade} />}
     </div>
   );
 }
 
 function Feedback({ item, grade }: { item: DrillItem; grade: Grade }) {
+  const secondTry = grade.correct && grade.attempt === 2;
+
   const tone = grade.selfGraded
     ? "neutral"
-    : grade.correct
-      ? "good"
-      : grade.score > 0
-        ? "warn"
-        : "bad";
+    : secondTry
+      ? "warn"
+      : grade.correct
+        ? "good"
+        : grade.score > 0
+          ? "warn"
+          : "bad";
 
   const headline = grade.selfGraded
     ? "Logged"
-    : grade.correct
-      ? "Correct"
-      : grade.score > 0
-        ? `Partly right — ${Math.round(grade.score * 100)}%`
-        : "Not quite";
+    : secondTry
+      ? "Got there on the second try"
+      : grade.correct
+        ? "Correct"
+        : grade.score > 0
+          ? `Partly right — ${Math.round(grade.score * 100)}%`
+          : "Not quite";
 
   const colors: Record<string, string> = {
     good: "var(--good)",
@@ -117,6 +189,11 @@ function Feedback({ item, grade }: { item: DrillItem; grade: Grade }) {
   };
 
   const hint = grade.errorType ? ERROR_HINTS[grade.errorType] : null;
+
+  // The first paragraph is the takeaway; anything after it is supporting detail.
+  const split = item.explanation.indexOf("\n\n");
+  const lead = split === -1 ? item.explanation : item.explanation.slice(0, split);
+  const rest = split === -1 ? "" : item.explanation.slice(split + 2).trim();
 
   return (
     <Card padding="none" className="animate-rise overflow-hidden">
@@ -148,7 +225,13 @@ function Feedback({ item, grade }: { item: DrillItem; grade: Grade }) {
           </div>
         )}
 
-        <Markdown>{item.explanation}</Markdown>
+        {lead && (
+          <p className="text-[16px] leading-[1.7] prose-inline" style={{ color: "var(--text)" }}>
+            <Inline>{lead}</Inline>
+          </p>
+        )}
+
+        {rest && <Markdown>{rest}</Markdown>}
 
         {item.interviewTip && (
           <div
@@ -179,6 +262,14 @@ function Feedback({ item, grade }: { item: DrillItem; grade: Grade }) {
             ))}
           </div>
         )}
+
+        <Link
+          href={moduleHref(item)}
+          className="text-[12.5px] hover:underline"
+          style={{ color: "var(--text-faint)" }}
+        >
+          Read the brief for {item.moduleTitle} →
+        </Link>
       </div>
     </Card>
   );

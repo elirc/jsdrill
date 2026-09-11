@@ -14,6 +14,13 @@ export default defineTrack({
       title: "What ASP.NET Core Is",
       level: 1,
       summary: "The runtime, the project layout, and how a request becomes a response.",
+      keyIdeas: [
+        "Modern .NET (5+) is cross-platform and unified; .NET Framework 4.x is Windows-only legacy.",
+        "Register services on `builder.Services` before `Build()`; compose middleware on `app` after it.",
+        "`Program.cs` is startup, `.csproj` is dependencies and target framework, `appsettings.json` is config.",
+        "Kestrel is the built-in server, usually behind a reverse proxy for TLS and load balancing.",
+        "Request flow: Kestrel → middleware → routing → auth → model binding → DI builds the controller → action → serialise.",
+      ],
       brief: `**ASP.NET Core** is a cross-platform web framework running on **.NET** — the runtime, standard library and JIT compiler. Since .NET 5 there is one unified platform (the old .NET Framework was Windows-only and is legacy).
 
 **Your app is a console application** that happens to start a web server. \`Program.cs\` is the entry point, and modern templates use top-level statements:
@@ -131,6 +138,13 @@ app.Run();`,
       title: "Dependency Injection & Lifetimes",
       level: 2,
       summary: "The container is built into the framework — and the lifetimes matter.",
+      keyIdeas: [
+        "Transient = new per resolution; Scoped = one per request; Singleton = one per app.",
+        "`DbContext` is scoped: not thread-safe, and the request is the natural unit of work.",
+        "A scoped service injected into a singleton is captured forever — the captive-dependency bug.",
+        "Need a scoped service inside a singleton? Inject `IServiceScopeFactory` and create a scope per operation.",
+        "DI's payoff is testability: constructor-injected interfaces can be replaced with fakes.",
+      ],
       brief: `ASP.NET Core has DI built in. You register services at startup and the framework constructs your controllers, injecting what they declare.
 
 \`\`\`csharp
@@ -215,6 +229,13 @@ ASP.NET Core's default container validates this in Development and throws at sta
       title: "Middleware & the Request Pipeline",
       level: 2,
       summary: "Order is behaviour — the ASP.NET Core version of the same lesson.",
+      keyIdeas: [
+        "Middleware runs in registration order; each can act before and after `next`, or short-circuit by not calling it.",
+        "`UseAuthentication` populates `HttpContext.User`; `UseAuthorization` evaluates it — identity before permission.",
+        "`UseRouting` before authorization (it needs the matched endpoint's metadata); `UseCors` between routing and endpoints.",
+        "`UseExceptionHandler` goes first so it wraps everything below.",
+        "CORS is enforced by the browser, not the server; `AllowAnyOrigin` + `AllowCredentials` is invalid.",
+      ],
       brief: `Every request passes through a pipeline of middleware you compose in \`Program.cs\`. Each one can act **before** and **after** the rest of the pipeline, and can short-circuit it.
 
 \`\`\`csharp
@@ -328,6 +349,13 @@ Not calling \`next\` short-circuits the pipeline — which is exactly how author
       title: "Controllers, Minimal APIs & Model Binding",
       level: 3,
       summary: "Getting data in, validating it, and returning the right result.",
+      keyIdeas: [
+        "`[ApiController]` gives automatic 400s on validation failure, body-binding inference, and ProblemDetails.",
+        "Never bind an entity from the request — over-posting lets clients set `IsAdmin`. Bind a DTO and map.",
+        "`ActionResult<T>` returns a typed body or any status code; `IActionResult` loses the type for tooling.",
+        "`NotFound()` for a missing resource; route constraints like `{id:guid}` reject bad ids before your code runs.",
+        "DataAnnotations for simple rules; FluentValidation for conditional or cross-field validation.",
+      ],
       brief: `**Controllers** suit larger apps with filters, conventions and many related endpoints. **Minimal APIs** suit small services and have less ceremony. Both are first-class; pick per project and be able to justify it.
 
 \`\`\`csharp
@@ -426,6 +454,13 @@ public async Task<{{1}}<OrderDto>> Get(Guid id)
       title: "EF Core: Querying, Tracking & Migrations",
       level: 3,
       summary: "The ORM leaks you're expected to know about.",
+      keyIdeas: [
+        "N+1: one query for the list, one per row for a navigation property. Fix with `Include` or project with `Select`.",
+        "Project to DTOs before materialising — fewer columns, no tracking, one query.",
+        "`AsNoTracking()` on read-only queries; keep tracking when you intend to modify and save.",
+        "`SaveChangesAsync` commits all tracked changes in one transaction; untracked entities are ignored.",
+        "Review generated migrations — a rename can become drop + add, deleting the column's data.",
+      ],
       brief: `**\`DbContext\`** is a unit of work plus a change tracker. You query, modify tracked entities, and call \`SaveChangesAsync()\` once — EF works out the INSERT/UPDATE/DELETE statements and wraps them in a transaction.
 
 **\`AsNoTracking()\`** for read-only queries. Tracking every entity costs memory and time building the snapshot needed for change detection. On a list endpoint that only serialises data, tracking is pure overhead — and this is a genuine, measurable win.
@@ -530,6 +565,13 @@ return orders.Select(o => new { o.Id, Customer = o.Customer.Name });`,
       title: "Configuration & Production ASP.NET",
       level: 4,
       summary: "Config precedence, secrets, and the settings that differ in production.",
+      keyIdeas: [
+        "Config layers: appsettings.json → appsettings.{Env}.json → user secrets → env vars → CLI args; later wins.",
+        "`ConnectionStrings__Default` as an environment variable overrides the JSON — same build, per-environment config.",
+        "Secrets come from a managed store or the platform; `user-secrets` is development-only.",
+        "Options pattern: typed, injectable config with `ValidateOnStart()` so bad config fails the deploy.",
+        "The developer exception page is an information leak — Development only; production uses `UseExceptionHandler`.",
+      ],
       brief: `**Configuration providers** are layered, and **later wins**:
 
 1. \`appsettings.json\`

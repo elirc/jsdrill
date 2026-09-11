@@ -2,21 +2,20 @@
 
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
-import { Badge, Button, Card, EmptyState, Markdown, ProgressBar, Spinner } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, ProgressBar, Spinner } from "@/components/ui";
 import { LevelPips } from "../page";
 import { LEVEL_META, LEVELS, type ModuleProgress, type Track, type TrackProgress } from "@/types";
 import { masteryLabel, tint } from "@/lib/utils";
 
 type TrackDetail = {
   track: Track;
-  modules: (ModuleProgress & { brief: string })[];
+  modules: ModuleProgress[];
   progress?: TrackProgress;
 };
 
 export default function TrackPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
   const [data, setData] = useState<TrackDetail | null>(null);
-  const [openModule, setOpenModule] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
@@ -135,80 +134,41 @@ export default function TrackPage({ params }: { params: Promise<{ slug: string }
           </div>
 
           <div className="flex flex-col gap-2.5">
-            {group.modules.map((module) => {
-              const open = openModule === module.moduleId;
-              return (
-                <Card key={module.moduleId} padding="none">
-                  <button
-                    type="button"
-                    onClick={() => setOpenModule(open ? null : module.moduleId)}
-                    className="w-full text-left px-5 py-4 flex items-center gap-4 hover:brightness-[1.08] transition-all"
-                    aria-expanded={open}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[14.5px] font-medium" style={{ color: "var(--text)" }}>
-                          {module.title}
-                        </span>
-                        {module.dueItems > 0 && <Badge tone="warn">{module.dueItems} due</Badge>}
-                        {module.locked && <Badge>Ahead of your level</Badge>}
-                      </div>
-                      <p className="text-[12.5px] mt-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
-                        {module.summary}
-                      </p>
-                      <div className="flex items-center gap-2.5 mt-2.5">
-                        <ProgressBar value={module.mastery} color={track.color} height={4} />
-                        <span
-                          className="text-[11px] tabular-nums flex-none"
-                          style={{ color: "var(--text-faint)" }}
-                        >
-                          {module.seenItems}/{module.totalItems}
-                        </span>
-                      </div>
-                    </div>
-
-                    <span
-                      className="flex-none text-[11px] transition-transform"
-                      style={{
-                        color: "var(--text-faint)",
-                        transform: open ? "rotate(90deg)" : "none",
-                      }}
-                    >
-                      ▶
+            {group.modules.map((module) => (
+              <Link key={module.moduleId} href={`/app/path/${slug}/${module.moduleSlug}`}>
+                <Card
+                  className="transition-all duration-150 hover:-translate-y-0.5"
+                  style={{ cursor: "pointer" }}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[16px] font-medium" style={{ color: "var(--text)" }}>
+                      {module.title}
                     </span>
-                  </button>
+                    {module.dueItems > 0 && <Badge tone="warn">{module.dueItems} due</Badge>}
+                    {module.locked && <Badge>Ahead of your level</Badge>}
+                  </div>
 
-                  {open && (
-                    <div
-                      className="px-5 pb-5 pt-1 border-t animate-rise"
-                      style={{ borderColor: "var(--border)" }}
+                  <p className="text-[14px] mt-1.5 leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                    {module.summary}
+                  </p>
+
+                  <div className="flex items-center gap-2.5 mt-3">
+                    <ProgressBar value={module.mastery} color={track.color} height={4} />
+                    <span
+                      className="text-[12px] tabular-nums flex-none"
+                      style={{ color: "var(--text-faint)" }}
                     >
-                      <div className="pt-4">
-                        <Markdown>{module.brief}</Markdown>
-                      </div>
+                      {module.seenItems}/{module.totalItems}
+                    </span>
+                  </div>
 
-                      <div className="mt-5 flex items-center gap-3">
-                        <Link
-                          href={`/app/drill?mode=module&moduleId=${module.moduleId}&size=${Math.min(
-                            module.totalItems,
-                            12
-                          )}`}
-                        >
-                          <Button size="sm">
-                            Drill {module.totalItems} item{module.totalItems === 1 ? "" : "s"}
-                          </Button>
-                        </Link>
-                        <span className="text-[12px]" style={{ color: "var(--text-faint)" }}>
-                          {module.masteredItems > 0
-                            ? `${module.masteredItems} mastered`
-                            : "Read the brief, then drill it"}
-                        </span>
-                      </div>
-                    </div>
-                  )}
+                  <p className="text-[12px] mt-2" style={{ color: "var(--text-faint)" }}>
+                    {module.keyIdeas.length} key idea{module.keyIdeas.length === 1 ? "" : "s"} ·{" "}
+                    {module.totalItems} question{module.totalItems === 1 ? "" : "s"}
+                  </p>
                 </Card>
-              );
-            })}
+              </Link>
+            ))}
           </div>
         </section>
       ))}

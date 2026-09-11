@@ -14,6 +14,13 @@ export default defineTrack({
       title: "The Node Runtime",
       level: 1,
       summary: "One thread, an event loop, and a worker pool for I/O.",
+      keyIdeas: [
+        "Your JS runs on one thread; libuv provides the event loop and a small thread pool for some I/O.",
+        "Great at concurrent I/O, terrible at concurrent CPU — offload heavy work to workers, queues, or a service.",
+        "Scale across cores with multiple processes (cluster, PM2, container replicas), not threads.",
+        "Config comes from `process.env`; validate at startup and fail fast. Never commit `.env` or a fallback secret.",
+        "Runtime imports must be in `dependencies`; `devDependencies` are omitted from production installs.",
+      ],
       brief: `Node is **V8 plus libuv**. Your JavaScript runs on a single thread; libuv provides the event loop and a small thread pool for filesystem work and some crypto.
 
 The consequence that matters: Node handles **concurrent I/O** brilliantly and **concurrent CPU** terribly. Thousands of simultaneous database queries are fine — they are all waiting elsewhere. One tight synchronous loop stalls every request in the process.
@@ -88,6 +95,13 @@ CPU-bound work belongs in \`worker_threads\`, a separate service, or a backgroun
       title: "Express: Routing & Middleware",
       level: 2,
       summary: "The pipeline, why order matters, and the four-argument error handler.",
+      keyIdeas: [
+        "Middleware runs in registration order and order is behaviour — parsers before routes, error handler last.",
+        "Error middleware has exactly four parameters `(err, req, res, next)`; Express identifies it by arity.",
+        "Express 4 does not catch async rejections — the request hangs. Wrap handlers, or use Express 5.",
+        "Routes match first-registered-first: put `/users/new` before `/users/:id`.",
+        "Call `next(err)` so one handler shapes, logs and sanitises every error.",
+      ],
       brief: `Express is a **pipeline**. A request enters, passes through middleware in the order you registered it, and each one may respond, modify the request, or call \`next()\` to continue.
 
 \`\`\`js
@@ -207,6 +221,13 @@ app.get("/users/new", newUserForm);`,
       title: "Building a REST API",
       level: 3,
       summary: "Layers, status codes, validation and pagination — the CRUD job itself.",
+      keyIdeas: [
+        "Layers: route (HTTP only) → service (business rules, no `req`/`res`) → repository (data only).",
+        "Validate every input at the boundary with a schema; return 400 naming the failing fields.",
+        "201 + Location on create; 204 on delete; 401 who are you; 403 I know and no; 409 conflict; never 200 with an error body.",
+        "Paginate every list endpoint from day one; cap the page size server-side.",
+        "Offset pagination is simple but slow at depth and unstable under inserts; cursor is stable and fast.",
+      ],
       brief: `A maintainable Node API has three layers:
 
 - **Route/controller** — parse and validate input, call the service, shape the response. No business logic, no SQL.
@@ -316,6 +337,14 @@ The payoff is that business logic can be unit-tested without spinning up Express
       title: "Auth, Sessions & JWT",
       level: 3,
       summary: "Hashing, cookies vs tokens, and what actually stops the common attacks.",
+      keyIdeas: [
+        "Store bcrypt/scrypt/Argon2 hashes — slow by design. Never SHA-256, never reversible encryption.",
+        "`httpOnly` + `Secure` + `SameSite` cookies defend tokens against XSS; add CSRF protection for mutations.",
+        "`localStorage` is readable by any script on the page — one XSS takes every token.",
+        "JWT payloads are readable by anyone; the signature proves origin, not secrecy. Pin the algorithm.",
+        "Stateless tokens cannot be revoked — use short-lived access tokens plus revocable refresh tokens.",
+        "Return the same 'invalid email or password' for both cases to prevent user enumeration.",
+      ],
       brief: `**Never store passwords.** Store a slow hash: **bcrypt**, **scrypt** or **Argon2**, with a per-password salt (bcrypt embeds it in the output). Not MD5, not SHA-256 — general-purpose hashes are far too fast, so an attacker with the hash file can try billions per second.
 
 **Sessions vs JWTs:**
@@ -400,6 +429,13 @@ Cookie flags worth memorising: \`httpOnly\`, \`Secure\`, \`SameSite\`, \`Max-Age
       title: "Production Concerns",
       level: 4,
       summary: "Logging, graceful shutdown, health checks and not leaking internals.",
+      keyIdeas: [
+        "Structured JSON logs with a correlation id per request; never log tokens, passwords or full bodies.",
+        "Log the full error server-side; return a generic message plus a reference id — never a stack trace.",
+        "On SIGTERM: stop accepting connections, drain in-flight requests, close pools, then exit.",
+        "Liveness checks stay cheap and local; dependency checks belong in a separate readiness probe.",
+        "Use helmet for headers and rate limiting on auth endpoints; never run as root in a container.",
+      ],
       brief: `The gap between an app that runs and a service you can operate:
 
 **Structured logging.** JSON, not \`console.log("user " + id + " did thing")\`. Include a **correlation id** per request so you can trace one user's journey across log lines. Log at boundaries — request in, external call out, error — with the identifiers you would search by. Never log secrets, tokens, passwords or full request bodies.

@@ -9,6 +9,7 @@
 import { db, schema } from "@/lib/db";
 import { eq, and, lte, desc, inArray } from "drizzle-orm";
 import { isMastered, MASTERY_STABILITY_DAYS } from "./fsrs";
+import { parseIdeas } from "./sessionBuilder";
 import { today } from "./utils";
 import type {
   ConceptStrength,
@@ -159,6 +160,7 @@ export function moduleProgress(
       moduleSlug: m.slug,
       title: m.title,
       summary: m.summary,
+      keyIdeas: parseIdeas(m.keyIdeas),
       level: m.level as Level,
       trackId: m.trackId,
       totalItems: ids.length,

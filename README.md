@@ -17,6 +17,10 @@ npm run dev          # http://localhost:3000
 
 229 questions across 50 modules and 10 tracks, each with a teaching explanation and a note on why an interviewer asks it. FSRS spaced repetition schedules each one for the moment you're about to forget it.
 
+Every module carries 4–6 **key ideas** — the things you'd want in your head before the first question. You read them before you first drill the module, and they're collected on a **Cheat Sheet** page for a pre-interview skim.
+
+Multiple choice, predict-output and fill-the-blank give you **one retry** after a miss before the answer is revealed. Getting it on the second try counts as partial credit and schedules the question to come back soon — a near-miss is worth more than a peek, and less than knowing it.
+
 **Eight question types**, because recognition and recall are different skills:
 
 | Kind | What you do |
@@ -62,6 +66,8 @@ Levels unlock per track as you demonstrate **retention**, not as you click throu
 | `/app/drill` | The drill runner for every question type |
 | `/app/path` | The roadmap: tracks × levels, mastery per track |
 | `/app/path/[track]` | Module list with teaching briefs; drill one module at a time |
+| `/app/path/[track]/[module]` | Module page: key ideas, the brief at reading width, the module's questions and their status |
+| `/app/cheatsheet` | Every module's key ideas on one page, filterable by track, with a "only what's not yet solid" toggle |
 | `/app/interview` | Mock interview — rapid-fire across all tracks, then a scorecard |
 | `/app/dashboard` | Mastery by track, weakest concepts, review forecast, activity map |
 | `/app/concepts` | Concept library — strength scored by idea, not by technology |
@@ -73,6 +79,7 @@ Levels unlock per track as you demonstrate **retention**, not as you click throu
 Each answer produces an FSRS rating from how you actually did — correctness first, then partial credit and speed as tie-breakers. `Explain it` items are self-rated, since only you know whether you'd have satisfied an interviewer.
 
 - Wrong → **Again**, back within the day
+- Right on the second try → **Hard** with half credit
 - Right but slow, or partial credit → **Hard**
 - Right at a normal pace → **Good**
 - Fast, confident, not a first exposure → **Easy**
@@ -113,6 +120,24 @@ scripts/
 Content is typed data, not JSON. Add to any file in `src/content/tracks/`:
 
 ```ts
+mod("react-effects", {
+  title: "Effects & Dependencies",
+  level: 2,
+  summary: "When effects run, what belongs in deps, and how cleanup works.",
+  brief: `Effects synchronise your component with something outside React…`,
+  keyIdeas: [
+    "An effect runs *after* paint, not during render.",
+    "The dependency array lists the values the effect reads.",
+    "Cleanup runs before every re-run and on unmount.",
+    "An object or function in deps is a new value every render.",
+  ],
+  items: [/* … */],
+}),
+```
+
+`keyIdeas` is required: 4–6 terse bullets, one idea each. `content:check` enforces 3–7 of them and validates their inline markup (backticks, emphasis) the same way it does explanations.
+
+```ts
 mcq("react-eff-cleanup", {
   q: "When does an effect's cleanup function run?",
   code: `useEffect(() => {
@@ -149,6 +174,7 @@ Things the type system can't:
 - A `fill-blank` whose own accepted answer would be marked wrong
 - An `order` item whose authored sequence doesn't grade as correct
 - An `mcq` with zero or several correct choices; a `multi` where everything is correct
+- Modules with fewer than 3 or more than 7 key ideas
 - Doubled, unbalanced or nested backticks that render as garbled prose
 - Explanations too short to teach anything; concepts with no registry entry
 

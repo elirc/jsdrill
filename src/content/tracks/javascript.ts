@@ -14,6 +14,14 @@ export default defineTrack({
       title: "Types & Coercion",
       level: 1,
       summary: "The seven primitives, truthiness, and why `==` has a bad reputation.",
+      keyIdeas: [
+        "Seven primitives; everything else — arrays, functions — is an object.",
+        "`+` concatenates if either side is a string; every other operator coerces to number.",
+        "Falsy: `false 0 -0 0n \"\" null undefined NaN`. `[]` and `{}` are truthy.",
+        "Default to `===`. The one idiomatic `==` is `x == null` (catches null and undefined).",
+        "`??` falls back only on null/undefined; `||` falls back on any falsy value like `0` or `\"\"`.",
+        "`typeof null` is `\"object\"` — a permanent legacy bug. `NaN !== NaN`; use `Number.isNaN`.",
+      ],
       brief: `JavaScript has **seven primitives** — \`string\`, \`number\`, \`boolean\`, \`null\`, \`undefined\`, \`symbol\`, \`bigint\` — and everything else is an object (including arrays and functions).
 
 **Coercion** is the language converting operands to a common type before working with them. Two rules cover most of it:
@@ -132,6 +140,13 @@ const b = 0 ?? 10;`,
       title: "Scope, Hoisting & Closures",
       level: 1,
       summary: "`var` vs `let`, the temporal dead zone, and functions that remember.",
+      keyIdeas: [
+        "`var` is function-scoped and hoisted as `undefined`; `let`/`const` are block-scoped with a temporal dead zone.",
+        "Function declarations hoist whole; `const fn = () => {}` does not.",
+        "A closure is a function plus the variables it captured; they stay alive as long as the function does.",
+        "`for (var …)` shares one binding across timeouts; `for (let …)` gives each iteration its own.",
+        "Closures give private state (counters, modules) and are why React effects can read stale values.",
+      ],
       brief: `**Scope** is where a name is visible. **Hoisting** is when it becomes usable.
 
 - \`var\` is **function-scoped** and hoisted with the value \`undefined\`. Reading it before the assignment gives \`undefined\`, not an error.
@@ -275,6 +290,13 @@ const hello = function () { console.log("yo"); };`,
       title: "Arrays & Objects in Practice",
       level: 2,
       summary: "The array methods you use hourly, plus copying, spreading and Map vs object.",
+      keyIdeas: [
+        "`sort()` compares as strings and mutates in place — always pass `(a, b) => a - b`.",
+        "Spread and `Object.assign` copy one level; nested objects stay shared. `structuredClone` for deep.",
+        "Mutating: push/pop/shift/unshift/splice/sort/reverse. Non-mutating: map/filter/slice/concat/toSorted.",
+        "`reduce` folds to one value — remember to return the accumulator every iteration.",
+        "Use `Map` for real dictionaries (any key type, `.size`, cheap add/delete); plain objects for records.",
+      ],
       brief: `The methods worth true fluency, grouped by what they return:
 
 | Returns a new array | Returns one value | Returns a boolean/index |
@@ -404,6 +426,13 @@ console.log(r);`,
       title: "Async, Promises & the Event Loop",
       level: 2,
       summary: "Microtasks vs macrotasks, Promise combinators, and the sequential-await trap.",
+      keyIdeas: [
+        "Order: run sync code → drain all microtasks (promises) → one macrotask (timers, I/O) → repeat.",
+        "A resolved promise's `.then` always runs before `setTimeout(fn, 0)`.",
+        "Sequential `await`s serialise independent work; start them together and `await Promise.all`.",
+        "`all` rejects on first failure; `allSettled` reports every outcome; `race` first to settle; `any` first success.",
+        "`try/catch` does not catch errors thrown later in a callback — use promises or catch inside it.",
+      ],
       brief: `JavaScript runs on **one thread**. Concurrency comes from the event loop, and the ordering rule is short enough to memorise:
 
 1. Run the current synchronous code to completion.
@@ -555,6 +584,13 @@ const c = await getSettings(id);`,
       title: "`this`, Classes & Prototypes",
       level: 3,
       summary: "Why `this` goes missing, and what `class` is actually built on.",
+      keyIdeas: [
+        "`this` is set by the call: `new` → new object; `.call/.bind` → what you pass; `obj.m()` → obj; bare `fn()` → undefined.",
+        "Arrow functions have no `this` of their own — they capture it lexically and cannot be rebound.",
+        "Extracting a method (`const g = obj.greet`) drops the receiver; fix with `bind` or an arrow class field.",
+        "`class` is syntax over prototypes: methods are shared on the prototype, constructor fields are per instance.",
+        "Classes are hoisted but in the TDZ — no `new Foo()` before the declaration.",
+      ],
       brief: `\`this\` is decided by **how a function is called**, not where it is written. The four binding rules, in priority order:
 
 1. \`new Foo()\` — \`this\` is the newly created object.
@@ -666,6 +702,13 @@ console.log(d.speak(), Object.getPrototypeOf(d) === Dog.prototype);`,
       title: "Modules & Modern Syntax",
       level: 3,
       summary: "ESM vs CommonJS, destructuring, optional chaining and the syntax on every modern PR.",
+      keyIdeas: [
+        "ESM `import`/`export` is static and hoisted, which is what enables tree-shaking.",
+        "CommonJS `require` is a runtime function call; you cannot `require()` an ES module synchronously.",
+        "`?.` short-circuits to `undefined` on null/undefined only; pair it with `??` for defaults.",
+        "Destructuring: `{ a, b: renamed, c = default, ...rest }` — defaults apply only when the value is `undefined`.",
+        "Use dynamic `import()` for conditional or lazy loading; it returns a promise and powers code splitting.",
+      ],
       brief: `**ES modules (ESM)** — \`import\`/\`export\` — are static: the imports are known before the code runs, which is what lets a bundler tree-shake unused exports. They are always strict mode, and the imports are hoisted.
 
 **CommonJS** — \`require\`/\`module.exports\` — is dynamic: \`require\` is a function call that runs at that point in the file, so you can call it conditionally. This is Node's original system and it is still everywhere.
@@ -756,6 +799,13 @@ console.log(user.settings?.theme ?? "dark");`,
       title: "Memory, Performance & Gotchas",
       level: 4,
       summary: "Leaks, debouncing, blocking the thread, and the traps that reach production.",
+      keyIdeas: [
+        "Leaks are references you forgot: un-removed listeners, live intervals, growing caches, detached DOM nodes.",
+        "One thread: a long synchronous loop freezes the UI or stalls every request in Node. Offload CPU work.",
+        "Debounce = run once after activity stops (search box). Throttle = at most once per interval (scroll).",
+        "Memoise pure functions only, key with `Map.has` (not truthiness), and bound the cache.",
+        "Measure before optimising — most slowness is round trips and payload size, not the loop you suspect.",
+      ],
       brief: `At the mid level you are expected to reason about what your JavaScript *costs*.
 
 **Leaks** in JavaScript are references you forgot you were holding:

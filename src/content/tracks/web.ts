@@ -13,6 +13,13 @@ export default defineTrack({
       title: "HTTP Fundamentals",
       level: 1,
       summary: "Methods, status codes, idempotency and headers.",
+      keyIdeas: [
+        "GET/HEAD are safe and idempotent; PUT/DELETE idempotent; POST neither — retry POST only with an idempotency key.",
+        "2xx success, 3xx redirect, 4xx the client erred, 5xx we erred.",
+        "401 = not authenticated (who are you?); 403 = authenticated but forbidden; 404 missing; 409 conflict; 429 rate limited.",
+        "HTTP is stateless — sessions are a convention built on cookies or tokens.",
+        "GET responses can be cached and revalidated with ETag/304; POST responses are not.",
+      ],
       brief: `HTTP is **stateless**: each request carries everything needed to serve it. Sessions are a convention layered on top with cookies or tokens.
 
 **Methods and their properties:**
@@ -100,6 +107,13 @@ The ones to know precisely: **200** OK, **201** Created, **204** No Content, **3
       title: "REST API Design",
       level: 2,
       summary: "Resources and verbs, versioning, and the shape of a good error.",
+      keyIdeas: [
+        "Nouns in the path, verbs in the method: `GET /orders/123`, not `POST /getOrder`.",
+        "PUT replaces the whole resource; PATCH updates the fields you send.",
+        "Plural nouns, shallow nesting, filtering/sorting/paging in the query string.",
+        "Wrap list responses in an object so pagination metadata can be added without a breaking change.",
+        "One consistent error shape with a machine-readable code; version from day one.",
+      ],
       brief: `REST models your API as **resources** (nouns) acted on by HTTP **methods** (verbs).
 
 \`\`\`
@@ -177,6 +191,13 @@ Not everything must be REST. A \`POST /orders/123/cancel\` action endpoint is pr
       title: "Browser, Storage & CORS",
       level: 2,
       summary: "Cookies vs storage, same-origin, and why CORS is not security.",
+      keyIdeas: [
+        "An origin is scheme + host + port; a subdomain or a different port is a different origin.",
+        "Cookies are sent automatically (convenient, CSRF-exposed); `httpOnly` hides them from script.",
+        "`localStorage` is plain text, readable by any script, never sent automatically.",
+        "CORS is browser-enforced and protects users, not your API — curl ignores it entirely.",
+        "Non-simple requests trigger an OPTIONS preflight; cache it with `Access-Control-Max-Age`.",
+      ],
       brief: `**Storage options:**
 
 | | Size | Sent to server | Expires | JS-readable |
@@ -265,6 +286,13 @@ Cookies being sent automatically is both their convenience and the reason CSRF e
       title: "Web Security Essentials",
       level: 4,
       summary: "XSS, CSRF, injection — what they are and what actually stops them.",
+      keyIdeas: [
+        "XSS: escape on output. React does this except `dangerouslySetInnerHTML` and `javascript:` URLs. Add a CSP.",
+        "CSRF needs automatically-attached credentials (cookies); `SameSite` plus a token defends. Bearer headers are not exposed.",
+        "SQL injection: parameterised queries, always — including raw SQL inside an ORM.",
+        "IDOR: check ownership on every id-taking endpoint; scope queries by the current user. UUIDs are not a fix.",
+        "HTTPS everywhere, no stack traces in responses, secrets out of the repo, dependencies audited.",
+      ],
       brief: `You are expected to name these, describe the attack, and give the real mitigation.
 
 **XSS (Cross-Site Scripting)** — untrusted data rendered as executable markup, so attacker JavaScript runs with your page's privileges: reading \`localStorage\`, making authenticated requests, keylogging. Mitigation: **escape on output** (React does this by default for \`{}\` interpolation — \`dangerouslySetInnerHTML\` is the deliberate hole), plus a Content-Security-Policy. Input sanitisation alone is not sufficient.

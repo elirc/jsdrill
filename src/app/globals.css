@@ -87,6 +87,7 @@ html {
 body {
   background: var(--bg);
   color: var(--text);
+  font-size: 15px;
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -118,9 +119,15 @@ body {
    ───────────────────────────────────────────────────────────── */
 
 .prose-reps {
-  color: var(--text-muted);
-  font-size: 0.9375rem;
-  line-height: 1.7;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+/* Body prose sits just under full strength; headings and strong stay at 100%. */
+.prose-reps p,
+.prose-reps li {
+  opacity: 0.9;
 }
 
 .prose-reps > * + * {
@@ -150,7 +157,7 @@ body {
 
 .prose-reps .md-code {
   font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: 0.85em;
+  font-size: 0.9em;
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -163,9 +170,9 @@ body {
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.85rem 1rem;
+  padding: 1rem 1.15rem;
   overflow-x: auto;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   line-height: 1.65;
 }
 
@@ -182,7 +189,7 @@ body {
   padding-left: 1.15rem;
   display: flex;
   flex-direction: column;
-  gap: 0.35em;
+  gap: 0.5em;
 }
 .prose-reps ul.md-list {
   list-style: disc;
@@ -210,7 +217,7 @@ body {
 .prose-reps .md-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 
 .prose-reps .md-table th {
@@ -233,10 +240,25 @@ body {
   border-bottom: none;
 }
 
+/* Roomier variant for long-form reading (module briefs). */
+.prose-reps.prose-lg {
+  font-size: 1.0625rem;
+  line-height: 1.8;
+}
+
+.prose-reps.prose-lg .md-h {
+  font-size: 1.125rem;
+  margin-top: 1.8em;
+}
+
 /* Inline-only variant used for question prompts. */
+.prose-inline {
+  line-height: inherit;
+}
+
 .prose-inline .md-code {
   font-family: var(--font-mono), ui-monospace, monospace;
-  font-size: 0.875em;
+  font-size: 0.9em;
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 5px;

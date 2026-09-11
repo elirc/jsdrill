@@ -9,6 +9,7 @@ import {
   createNewCard,
   formatInterval,
   ratingFor,
+  Rating,
   scheduleNext,
 } from "@/lib/fsrs";
 import { toItem } from "@/lib/sessionBuilder";
@@ -20,11 +21,13 @@ const DEFAULT_USER_ID = "default-user";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { itemId, response, timeSpent, mode } = body as {
+    const { itemId, response, timeSpent, mode, attempt } = body as {
       itemId?: string;
       response?: DrillResponse;
       timeSpent?: number;
       mode?: string;
+      /** 2 when the drill allowed a retry after a first miss. */
+      attempt?: number;
     };
 
     if (!itemId || !response) {
@@ -43,6 +46,13 @@ export async function POST(request: Request) {
 
     // Re-grade server-side rather than trusting the client's verdict.
     const verdict = grade(item, response);
+
+    // A correct answer reached on the second try was a near miss: it
+    // counts as answered, but earns partial credit and comes back soon.
+    if (attempt === 2) {
+      verdict.attempt = 2;
+      if (verdict.correct) verdict.score = Math.min(verdict.score, 0.5);
+    }
     const seconds = Math.max(0, Math.min(timeSpent ?? 0, 3600));
     const timestamp = now();
 
@@ -68,7 +78,10 @@ export async function POST(request: Request) {
       db.insert(schema.userCards).values(card).run();
     }
 
-    const rating = ratingFor(item, verdict, seconds, card.reps);
+    const rating =
+      verdict.attempt === 2 && verdict.correct
+        ? Rating.Hard
+        : ratingFor(item, verdict, seconds, card.reps);
     const updated = scheduleNext(cardFromDb(card), rating);
     const updatedData = cardToDb(updated);
 

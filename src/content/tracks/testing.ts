@@ -13,6 +13,13 @@ export default defineTrack({
       title: "What to Test, and Where",
       level: 1,
       summary: "The pyramid, and testing behaviour rather than implementation.",
+      keyIdeas: [
+        "Many fast unit tests, fewer integration tests, a few end-to-end tests for critical journeys.",
+        "Test behaviour, not implementation — a test that asserts an internal call breaks on every refactor.",
+        "Coverage is a diagnostic, not a target; the real question is 'does it fail when I break the code?'",
+        "Deterministic and independent: no real clock, randomness, network or ordering between tests.",
+        "Name tests by expected behaviour so a failure report reads without opening the file.",
+      ],
       brief: `**The testing pyramid** — many fast unit tests, fewer integration tests, a handful of end-to-end tests:
 
 - **Unit** — one function or class in isolation. Milliseconds. Pinpoints the failure exactly.
@@ -89,6 +96,13 @@ expect(calculateTotal([{ price: 100 }], "SAVE10")).toBe(90);`,
       title: "Unit Testing JS, TS & .NET",
       level: 2,
       summary: "Jest/Vitest and xUnit, plus what to mock and what not to.",
+      keyIdeas: [
+        "`toBe` is reference equality; `toEqual` is structural — use `toEqual` for objects and arrays.",
+        "Mock what is slow, non-deterministic or external: HTTP, clock, random, email, payments.",
+        "Never mock the thing under test or pure value logic.",
+        "Async tests must return or `await` the promise, or they pass before the assertion runs.",
+        "xUnit: `[Fact]` for one case, `[Theory]` + `[InlineData]` for many; Vitest/Jest: `it.each`.",
+      ],
       brief: `**JavaScript/TypeScript** — Vitest (Vite projects) or Jest. Same shape:
 
 \`\`\`js
@@ -185,6 +199,13 @@ public void Applies_discount(decimal price, string? code, decimal expected) =>
       title: "Testing React & APIs",
       level: 3,
       summary: "Query the way a user would, and integration-test the endpoint.",
+      keyIdeas: [
+        "Query the way a user perceives it: `getByRole` → `getByLabelText` → `getByText` → `getByTestId` last.",
+        "`getBy` throws if absent, `queryBy` returns null (assert absence), `findBy` awaits and retries (async content).",
+        "Interact with `userEvent`, not `fireEvent`.",
+        "Assert rendered output, interactions, callbacks and loading/error/empty states — never internal state.",
+        "Integration-test endpoints against a real test database; explicitly test the authorisation denial case.",
+      ],
       brief: `**React Testing Library**'s guiding principle: *the more your tests resemble the way your software is used, the more confidence they give*. So query the DOM the way a user perceives it, not by implementation details.
 
 **Query priority:**

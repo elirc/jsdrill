@@ -36,6 +36,7 @@ export type AuthoredModule = {
   level: Level;
   summary: string;
   brief: string;
+  keyIdeas: string[];
   items: AuthoredItem[];
 };
 
@@ -243,10 +244,13 @@ export function mod(
     level: Level;
     summary: string;
     brief: string;
+    /** The 4-6 things worth remembering. Terse; light markdown allowed. */
+    keyIdeas: string[];
     items: AuthoredItem[];
   }
 ): AuthoredModule {
   assert(o.items.length > 0, `module "${slug}" has no items`);
+  assert(o.keyIdeas.length >= 3, `module "${slug}" needs at least 3 key ideas`);
   return { slug, ...o };
 }
 

@@ -320,20 +320,46 @@ function enrich(rows: ItemRow[], userId: string, reviewIds: Set<string>): DrillI
       .map((c) => [c.itemId, c.reps])
   );
 
+  // Modules the learner has never answered anything from: the drill
+  // shows their key ideas before the first question, so a new topic
+  // opens with a primer rather than cold.
+  const touchedModules = new Set(
+    db
+      .select({ moduleId: schema.items.moduleId })
+      .from(schema.userCards)
+      .innerJoin(schema.items, eq(schema.userCards.itemId, schema.items.id))
+      .where(and(eq(schema.userCards.userId, userId), inArray(schema.items.moduleId, moduleIds)))
+      .all()
+      .map((r) => r.moduleId)
+  );
+
   return rows.map((row) => {
     const track = tracks.get(row.trackId);
     const mod = modules.get(row.moduleId);
+    const firstTime = !touchedModules.has(row.moduleId);
     return {
       ...toItem(row),
       trackName: track?.name ?? "Unknown",
       trackSlug: track?.slug ?? "",
       trackColor: track?.color ?? "#6366f1",
       moduleTitle: mod?.title ?? "",
+      moduleSlug: mod?.slug ?? "",
+      moduleSummary: mod?.summary ?? "",
+      moduleKeyIdeas: firstTime && mod ? parseIdeas(mod.keyIdeas) : null,
       concepts: conceptsByItem.get(row.id) ?? [],
       isReview: reviewIds.has(row.id),
       reps: repsByItem.get(row.id) ?? 0,
     };
   });
+}
+
+export function parseIdeas(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export function toItem(row: ItemRow): Item {

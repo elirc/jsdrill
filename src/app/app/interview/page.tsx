@@ -315,6 +315,8 @@ export default function InterviewPage() {
         onChange={setResponse}
         grade={grade}
         onSubmit={submit}
+        revealed={grade !== null}
+        showPrimer={false}
         bookmarked={false}
         onBookmark={() => {}}
       />

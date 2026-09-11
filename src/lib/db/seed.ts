@@ -30,6 +30,7 @@ function now() {
 
 // ─── Schema (idempotent) ───
 function createTables() {
+  migrate();
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS tracks (
       id TEXT PRIMARY KEY,
@@ -50,6 +51,7 @@ function createTables() {
       level INTEGER NOT NULL DEFAULT 1,
       summary TEXT NOT NULL DEFAULT '',
       brief TEXT NOT NULL DEFAULT '',
+      key_ideas TEXT NOT NULL DEFAULT '[]',
       sort_order INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS modules_track_idx ON modules(track_id, level, sort_order);
@@ -165,6 +167,20 @@ function createTables() {
   `);
 }
 
+/** Additive column migrations for databases created by earlier versions. */
+function migrate() {
+  const hasModules = sqlite
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='modules'")
+    .get();
+  if (!hasModules) return;
+  const columns = sqlite
+    .prepare("PRAGMA table_info(modules)")
+    .all() as { name: string }[];
+  if (!columns.some((c) => c.name === "key_ideas")) {
+    sqlite.exec("ALTER TABLE modules ADD COLUMN key_ideas TEXT NOT NULL DEFAULT '[]'");
+  }
+}
+
 function seed() {
   const timestamp = now();
   const stats = contentStats();
@@ -255,6 +271,7 @@ function seed() {
           level: m.level,
           summary: m.summary,
           brief: m.brief,
+          keyIdeas: JSON.stringify(m.keyIdeas),
           sortOrder: modIndex,
         })
         .onConflictDoUpdate({
@@ -265,6 +282,7 @@ function seed() {
             level: m.level,
             summary: m.summary,
             brief: m.brief,
+            keyIdeas: JSON.stringify(m.keyIdeas),
             sortOrder: modIndex,
           },
         })

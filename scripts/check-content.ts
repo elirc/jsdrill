@@ -101,6 +101,13 @@ for (const track of TRACKS) {
       fail(`${track.slug}/${mod.slug}`, "brief is too short to teach anything");
     }
     checkProse(`${track.slug}/${mod.slug}`, "brief", mod.brief);
+    if (mod.keyIdeas.length < 3 || mod.keyIdeas.length > 7) {
+      fail(`${track.slug}/${mod.slug}`, `${mod.keyIdeas.length} key ideas — aim for 4 to 6`);
+    }
+    mod.keyIdeas.forEach((idea, i) => {
+      checkProse(`${track.slug}/${mod.slug}`, `key idea ${i + 1}`, idea);
+      if (idea.length > 160) warn(`${track.slug}/${mod.slug}`, `key idea ${i + 1} is long — keep them scannable`);
+    });
     if (mod.items.length < 3) {
       warn(`${track.slug}/${mod.slug}`, `only ${mod.items.length} item(s)`);
     }

@@ -13,6 +13,13 @@ export default defineTrack({
       title: "Git Day to Day",
       level: 1,
       summary: "The commands you'll run hourly, and how to undo things safely.",
+      keyIdeas: [
+        "Three places: working directory → staging (`add`) → repository (`commit`).",
+        "`revert` adds a commit that undoes another — safe on shared history. `reset` rewrites history — local only.",
+        "`reset --soft` keeps changes staged, `reset` (mixed) keeps them unstaged, `reset --hard` deletes them.",
+        "`reflog` finds commits after a bad reset; anything committed is usually recoverable.",
+        "`--amend` and `push --force-with-lease` only on your own unpushed or unshared branches.",
+      ],
       brief: `Git has three places a change can be: the **working directory** (your files), the **staging area / index** (\`git add\`), and the **repository** (\`git commit\`).
 
 \`\`\`bash
@@ -94,6 +101,13 @@ git diff --staged          # staged changes
       title: "Branching, PRs & Merge vs Rebase",
       level: 2,
       summary: "How a team actually works, and resolving conflicts without fear.",
+      keyIdeas: [
+        "Rebase your own feature branch to stay current; merge to integrate; never rebase shared history.",
+        "Conflicts are just edits Git could not make — resolve to the correct final state, `add`, continue.",
+        "Small single-purpose PRs with a 'why' description; CI green before review; self-review the diff first.",
+        "A committed secret stays in history — rotate it immediately; scrubbing history is cleanup, not the fix.",
+        "`.gitignore` build output, `node_modules`, `bin/`, `obj/`, `.env`.",
+      ],
       brief: `**Feature branch workflow**, in practice:
 
 \`\`\`bash
@@ -180,6 +194,13 @@ The widely-used rule: **rebase your own local feature branch to keep it current;
       title: "Packages, Builds & Environments",
       level: 3,
       summary: "Semver, lockfiles, and what a build actually produces.",
+      keyIdeas: [
+        "Semver: major breaks, minor adds, patch fixes. `^1.2.3` allows 1.x.x; `~1.2.3` allows 1.2.x.",
+        "Commit the lockfile for applications; `npm ci` installs exactly from it and fails on mismatch.",
+        "Runtime imports go in `dependencies`; build/test tooling in `devDependencies`.",
+        "`NEXT_PUBLIC_`/`VITE_` values ship in the bundle — anyone can read them. Proxy real secrets through your server.",
+        "Vite and esbuild strip types without checking them — run `tsc` in the build to fail on type errors.",
+      ],
       brief: `**Semantic versioning** — \`MAJOR.MINOR.PATCH\`:
 - **MAJOR** — breaking change
 - **MINOR** — backwards-compatible feature
@@ -264,6 +285,13 @@ Range syntax in \`package.json\`: \`^1.2.3\` allows any \`1.x.x\` (minor and pat
       title: "Deploying & Debugging Production",
       level: 4,
       summary: "CI/CD, migrations, rollbacks and diagnosing what you can't reproduce.",
+      keyIdeas: [
+        "Pipeline: install → lint → typecheck → test → build → deploy → smoke test. Tests gate, always.",
+        "Build once and promote the same artefact; configure per environment from outside.",
+        "Schema changes must work with the previously deployed version: expand, dual-write, backfill, contract later.",
+        "Restore service first (roll back), diagnose second. Rollback must be routine and rehearsed.",
+        "Debug production from logs with correlation ids and error tracking; then reproduce with a failing test.",
+      ],
       brief: `**A CI/CD pipeline**, roughly: install → lint → type-check → test → build → deploy → smoke test.
 
 **Build once, promote the same artefact.** Rebuilding per environment means the thing you tested is not the thing you shipped. Configuration comes from the environment, not from a rebuild.

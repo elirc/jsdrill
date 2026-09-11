@@ -13,6 +13,13 @@ export default defineTrack({
       title: "Querying Fundamentals",
       level: 1,
       summary: "Logical execution order, NULL, and WHERE vs HAVING.",
+      keyIdeas: [
+        "Logical order: FROM → JOIN → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT.",
+        "`WHERE` filters rows before grouping; `HAVING` filters groups after — aggregates go in HAVING.",
+        "SELECT aliases are not visible in WHERE (it runs earlier) but are in ORDER BY.",
+        "NULL is unknown: `NULL = NULL` is not true; use `IS NULL`. Aggregates skip NULLs; `COUNT(*)` does not.",
+        "`NOT IN (subquery)` returns zero rows if the subquery contains a single NULL — prefer `NOT EXISTS`.",
+      ],
       brief: `SQL is **declarative**: you describe the result, the engine decides how to produce it.
 
 **Logical execution order** — not the order you write it, and it explains most beginner errors:
@@ -94,6 +101,13 @@ WHERE total > 100;`,
       title: "Joins & Aggregation",
       level: 2,
       summary: "INNER vs LEFT, and the WHERE clause that quietly undoes your LEFT JOIN.",
+      keyIdeas: [
+        "INNER keeps matches only; LEFT keeps every left row with NULLs for no match.",
+        "A WHERE condition on the right table of a LEFT JOIN turns it back into an INNER JOIN — put it in ON.",
+        "Anti-join for 'has none': LEFT JOIN … WHERE right.id IS NULL, or NOT EXISTS.",
+        "Count a right-table column (`COUNT(o.id)`) to get 0 for unmatched rows; `COUNT(*)` gives 1.",
+        "Every non-aggregated SELECT column must be in GROUP BY; GROUP BY does not sort.",
+      ],
       brief: `| Join | Keeps |
 |---|---|
 | \`INNER\` | Only rows matching on both sides |
@@ -196,6 +210,13 @@ WHERE o.id {{2}} NULL;`,
       title: "Schema Design & Transactions",
       level: 3,
       summary: "Keys, normalisation, and ACID with the isolation levels.",
+      keyIdeas: [
+        "Primary keys identify; foreign keys enforce relationships — and usually do not create an index for you.",
+        "Many-to-many needs a junction table with a composite key; relationship facts live there.",
+        "Normalise to 3NF by default; denormalise deliberately for a measured read path with a plan to keep it consistent.",
+        "ACID: a transfer's debit and credit must commit together or not at all.",
+        "Isolation levels trade anomalies for concurrency: Read Committed is the common default; Serializable is strictest.",
+      ],
       brief: `**Keys**: a **primary key** uniquely identifies a row. A **foreign key** references another table's primary key and lets the database *enforce* the relationship — orphaned rows become impossible rather than merely discouraged.
 
 **Normalisation** removes duplicated facts so one change updates one row:
@@ -280,6 +301,13 @@ Stronger isolation means more locking and less concurrency. Read Committed is th
       title: "Indexes & Query Performance",
       level: 4,
       summary: "The main lever, its costs, and how to defeat it by accident.",
+      keyIdeas: [
+        "Index the columns you filter, join and sort on; every index costs writes and storage.",
+        "A function on an indexed column (`YEAR(created_at)`) is non-sargable — rewrite as a range on the bare column.",
+        "Composite indexes follow the leftmost-prefix rule: `(a, b)` serves `a` and `a, b`, never `b` alone.",
+        "`LIKE 'x%'` uses an index; `LIKE '%x'` cannot.",
+        "Read `EXPLAIN ANALYZE` — a scan where you expected a seek, or estimates far from actuals, points at the cause.",
+      ],
       brief: `An index is a sorted structure (usually a B-tree) that turns a full table scan into a targeted seek. It is the single biggest lever on read performance.
 
 **Index what you filter, join and sort on** — the columns in \`WHERE\`, \`JOIN ... ON\` and \`ORDER BY\`.

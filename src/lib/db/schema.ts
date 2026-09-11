@@ -25,6 +25,7 @@ export const modules = sqliteTable(
     level: integer("level").notNull().default(1),
     summary: text("summary").notNull().default(""),
     brief: text("brief").notNull().default(""),
+    keyIdeas: text("key_ideas").notNull().default("[]"), // JSON string[]
     sortOrder: integer("sort_order").notNull().default(0),
   },
   (t) => [index("modules_track_idx").on(t.trackId, t.level, t.sortOrder)]

@@ -171,6 +171,10 @@ export type DrillItem = Item & {
   trackSlug: string;
   trackColor: string;
   moduleTitle: string;
+  moduleSlug: string;
+  moduleSummary: string;
+  /** Set when the learner has never answered anything from this module. */
+  moduleKeyIdeas: string[] | null;
   concepts: ConceptRef[];
   isReview: boolean;
   /** Times this user has seen it. */
@@ -199,6 +203,8 @@ export type Module = {
   summary: string;
   /** Markdown-ish teaching brief: read this before drilling. */
   brief: string;
+  /** The 4-6 things to remember. Shown before first drilling, and on the cheat sheet. */
+  keyIdeas: string[];
   sortOrder: number;
 };
 
@@ -247,6 +253,8 @@ export type Grade = {
   errorType?: string | null;
   /** Set for `short` — grading is the learner's own call. */
   selfGraded?: boolean;
+  /** 2 when the answer was reached on a second attempt (partial credit). */
+  attempt?: 1 | 2;
 };
 
 // ─── Sessions ───
@@ -291,6 +299,7 @@ export type ModuleProgress = {
   moduleSlug: string;
   title: string;
   summary: string;
+  keyIdeas: string[];
   level: Level;
   trackId: string;
   totalItems: number;

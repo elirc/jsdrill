@@ -14,6 +14,13 @@ export default defineTrack({
       title: "Types, Interfaces & the Basics",
       level: 1,
       summary: "`type` vs `interface`, `any` vs `unknown`, and what survives to runtime.",
+      keyIdeas: [
+        "Types are erased at build time — nothing validates an API response unless you write the check.",
+        "`unknown` is the safe top type: must be narrowed before use. `any` switches checking off and spreads.",
+        "`type` can express unions, tuples, primitives and mapped types; `interface` can be merged and extended.",
+        "`as` is an assertion, not a check — validate at boundaries with a schema (Zod) that also infers the type.",
+        "With `strict`, `find` returns `T | undefined` and callers must handle the missing case.",
+      ],
       brief: `The single most important fact: **TypeScript types are erased at build time**. They constrain your source code; they do not exist when the program runs. There is no type checking of an API response unless you write one.
 
 **\`type\` vs \`interface\`** — for describing an object shape they are nearly interchangeable. The real differences:
@@ -107,6 +114,13 @@ if (typeof data === "object" && data !== null && "name" in data) { /* ... */ }
       title: "Unions, Narrowing & Guards",
       level: 2,
       summary: "Discriminated unions — the pattern that replaces most of your defensive checks.",
+      keyIdeas: [
+        "Narrow with `typeof`, `instanceof`, `in`, truthiness, and equality against literal discriminants.",
+        "Model 'one of these shapes' as a discriminated union — impossible states become unrepresentable.",
+        "A member access must be valid for every union member, or you must narrow first.",
+        "A `default` branch assigning to `never` turns a forgotten case into a compile error.",
+        "Type predicates (`x is Fish`) narrow at call sites but are trusted, not verified — keep them tiny.",
+      ],
       brief: `A **union** says a value is one of several types. **Narrowing** is proving to the compiler which one you have.
 
 The narrowing tools: \`typeof\` (primitives), \`instanceof\` (classes), \`in\` (property presence), truthiness checks, equality against literals, and **discriminant properties**.
@@ -238,6 +252,13 @@ type State =
       title: "Generics",
       level: 2,
       summary: "Preserving the relationship between input and output types.",
+      keyIdeas: [
+        "A generic preserves the relationship between input and output types instead of collapsing to `any`.",
+        "Inference does the work: `first(users)` is `User | undefined` with no annotation.",
+        "Constrain with `extends` to require capabilities; `K extends keyof T` plus `T[K]` gives typed property access.",
+        "A type parameter used in only one position is noise — reach for a plain type instead.",
+        "TypeScript generics are erased; C# generics are reified. You cannot check `T` at runtime in TS.",
+      ],
       brief: `A generic is a type **parameter**. The point is not reuse — it is preserving a relationship the compiler would otherwise lose.
 
 \`\`\`ts
@@ -349,6 +370,13 @@ const result = wrap("hello");`,
       title: "Utility Types & Deriving Types",
       level: 3,
       summary: "One source of truth, everything else derived.",
+      keyIdeas: [
+        "Derive, don't duplicate: `Partial`, `Pick`, `Omit`, `Required`, `Readonly`, `Record`.",
+        "`Omit` server-owned fields for create payloads; `Partial` that for PATCH payloads.",
+        "`Record<Union, V>` forces every union member as a key — add a status and the map breaks until handled.",
+        "`ReturnType<typeof fn>` and `Awaited<T>` tie a type to the implementation that produces it.",
+        "`Readonly` and `readonly` are compile-time and shallow — no runtime protection.",
+      ],
       brief: `Utility types let one type generate the rest, so a field added in one place propagates everywhere.
 
 | Utility | Produces |
@@ -453,6 +481,13 @@ config.retries = 5;`,
       title: "Config, Structural Typing & Traps",
       level: 4,
       summary: "`strict`, excess property checks, and the places TypeScript is unsound on purpose.",
+      keyIdeas: [
+        "`strict: true` is where the value lives: `strictNullChecks` and `noImplicitAny` above all.",
+        "TypeScript is structural: any value with the right members is compatible, `implements` or not.",
+        "Object literals get excess-property checks; the same object via a variable does not.",
+        "`!` (non-null assertion) suppresses the check without verifying — use rarely and comment why.",
+        "TypeScript is deliberately unsound in places for practicality; it is a tool, not a proof.",
+      ],
       brief: `**\`strict: true\`** turns on the checks that make TypeScript worth having — chiefly \`strictNullChecks\` (null and undefined are no longer assignable to everything) and \`noImplicitAny\`. A codebase without it gets a fraction of the value.
 
 **Structural typing**: compatibility is by shape. A value with the right members satisfies an interface it has never heard of. C# is *nominal* — you must declare \`: IFoo\`. This is why a plain object literal can be passed where an interface is expected.

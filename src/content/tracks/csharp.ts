@@ -14,6 +14,13 @@ export default defineTrack({
       title: "Types, Value vs Reference",
       level: 1,
       summary: "The distinction behind half of all C# interview questions.",
+      keyIdeas: [
+        "Value types (int, bool, DateTime, struct, enum) copy on assignment; reference types (class, string, arrays) copy the reference.",
+        "`string` is a reference type that behaves like a value because it is immutable — use `StringBuilder` in loops.",
+        "`int[]` is a reference type even though its elements are values.",
+        "`record` is a reference type with value equality; `record struct` is the value-type version.",
+        "Nullable reference types make `string?` explicit — compile-time warnings, not runtime enforcement.",
+      ],
       brief: `**Value types** (\`int\`, \`bool\`, \`double\`, \`char\`, \`decimal\`, \`enum\`, and any \`struct\`) hold their data directly. Assigning one **copies the value**. They live on the stack, or inline inside the object that contains them.
 
 **Reference types** (\`class\`, \`interface\`, \`string\`, \`object\`, arrays, delegates) hold a reference to data on the heap. Assigning one copies the **reference**, so both variables point at the same object.
@@ -114,6 +121,13 @@ string? b = null;   // fine`,
       title: "Classes, Interfaces & OOP",
       level: 1,
       summary: "Abstract vs interface, override vs overload, and why you code to an abstraction.",
+      keyIdeas: [
+        "Interface = a capability unrelated types can share, many per class, no state. Abstract class = is-a, one base, shared state.",
+        "Methods are not virtual by default; `new` hides, `override` replaces. Dispatch on hidden methods uses the declared type.",
+        "Overload resolves at compile time by parameters; override resolves at runtime by the object's actual type.",
+        "C# is nominal: a class must declare `: IFoo` to be an `IFoo`, unlike TypeScript's structural typing.",
+        "Depend on interfaces via the constructor — it is what makes a class testable with fakes.",
+      ],
       brief: `**Interface vs abstract class** — the question that appears in nearly every .NET interview:
 
 | | Interface | Abstract class |
@@ -207,6 +221,13 @@ public class EmailNotifier : {{2}}
       title: "Collections & LINQ",
       level: 2,
       summary: "Choosing the right container, and LINQ's deferred execution trap.",
+      keyIdeas: [
+        "LINQ is lazy: a query variable is a description, and each terminal operation re-executes it.",
+        "`IQueryable` translates to SQL; `.ToList()` or `.AsEnumerable()` pulls everything into memory — materialise last.",
+        "`First` throws on empty, `FirstOrDefault` returns default (0 for int!), `Single` throws on more than one.",
+        "`Any()` beats `Count() > 0` — it stops early and translates to EXISTS.",
+        "Membership tests in a loop need `HashSet<T>` (O(1)), not `List<T>.Contains` (O(n)).",
+      ],
       brief: `**Pick the right collection:**
 
 | Need | Use | Lookup |
@@ -301,6 +322,13 @@ var b = db.Users.ToList().Where(u => u.IsActive).ToList();`,
       title: "async / await & Tasks",
       level: 2,
       summary: "Why async helps a web server, and the deadlock everyone hits once.",
+      keyIdeas: [
+        "`await` returns the thread to the pool during I/O — it improves throughput, not per-request latency.",
+        "`.Result` and `.Wait()` block the thread and deadlock wherever a synchronisation context exists. Async all the way.",
+        "Sequential awaits serialise independent calls; start them and `await Task.WhenAll` — but not on one `DbContext`.",
+        "`async void` is only for event handlers; its exceptions cannot be caught and crash the process.",
+        "Accept and pass a `CancellationToken`; `Task.Run` is for CPU-bound work, not for wrapping I/O.",
+      ],
       brief: `\`async\`/\`await\` in C# is about **thread liberation**, not speed. When you \`await\` an I/O operation, the thread is returned to the pool instead of sitting blocked. On a web server with a fixed thread pool, that is the difference between handling hundreds of concurrent requests and exhausting the pool.
 
 The rules:
@@ -405,6 +433,13 @@ catch (Exception) { Console.WriteLine("caught"); }`,
       title: "Modern C# & Quality",
       level: 3,
       summary: "Records, pattern matching, disposal and exception handling.",
+      keyIdeas: [
+        "Records give value equality, `ToString`, deconstruction and `with` — the default for DTOs.",
+        "Pattern matching (`switch` expressions, property patterns) replaces if/is/cast chains.",
+        "`throw;` preserves the stack trace; `throw ex;` destroys it. Wrap with an inner exception to add context.",
+        "`using` disposes deterministically — connections, streams, `HttpResponseMessage`. The GC handles memory only.",
+        "Catch specific exceptions you can handle; never an empty `catch {}`; use `TryParse` for expected failures.",
+      ],
       brief: `**Records** are reference types with **value-based equality**, generated \`ToString\`, deconstruction and \`with\` expressions:
 
 \`\`\`csharp

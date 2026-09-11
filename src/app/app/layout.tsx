@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/app", label: "Today", exact: true },
   { href: "/app/path", label: "Roadmap" },
+  { href: "/app/cheatsheet", label: "Cheat Sheet" },
   { href: "/app/interview", label: "Mock Interview" },
   { href: "/app/dashboard", label: "Progress" },
   { href: "/app/concepts", label: "Concepts" },

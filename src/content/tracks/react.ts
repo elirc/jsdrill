@@ -14,6 +14,13 @@ export default defineTrack({
       title: "Components, Props & State",
       level: 1,
       summary: "What triggers a render, and why state updates look asynchronous.",
+      keyIdeas: [
+        "A component re-renders when its state changes, its parent re-renders, or a consumed context changes.",
+        "State is a snapshot of that render — `setCount(count + 1)` three times gives 1. Use `c => c + 1`.",
+        "Never mutate state: React compares by reference, so `push` on the same array is invisible to it.",
+        "Props are read-only — pass a callback down and let the owner update the state.",
+        "Don't copy props into state; derive during render, or `key` the component to remount with new data.",
+      ],
       brief: `A component is a function that takes **props** and returns UI. React calls it, compares the result to the previous one, and applies the minimum DOM changes.
 
 A component re-renders when:
@@ -137,6 +144,13 @@ function add(item) {
       title: "useEffect & Dependencies",
       level: 2,
       summary: "Stale closures, infinite loops, cleanup — the three effect bugs.",
+      keyIdeas: [
+        "Effects synchronise with systems outside React: subscriptions, timers, network, the DOM.",
+        "Dependencies compare with `Object.is` — an inline object or array is new every render and loops forever.",
+        "A stale closure comes from a value left out of the dependency array; use updater functions or add it.",
+        "Return a cleanup: remove listeners, clear timers, abort fetches. It runs before every re-run and on unmount.",
+        "Derived data belongs in render, event responses in the handler — not in effects.",
+      ],
       brief: `\`useEffect\` **synchronises your component with something outside React**: a subscription, a timer, a browser API, a network request. It runs *after* the render is committed to the screen.
 
 The dependency array controls re-running. React compares each dependency with \`Object.is\`:
@@ -285,6 +299,12 @@ useEffect(() => {
       title: "Lists, Keys & Reconciliation",
       level: 2,
       summary: "Why index keys break, and what React actually does on re-render.",
+      keyIdeas: [
+        "Keys tell React which element is which across renders; state and DOM follow the key.",
+        "Index keys break on reorder, insert or delete — row state ends up attached to the wrong data.",
+        "`Math.random()` or `Date.now()` as a key remounts every row on every render.",
+        "Keys must be stable, unique among siblings, and derived from the data — normally the id.",
+      ],
       brief: `When React re-renders, it **reconciles**: it compares the new element tree with the previous one and applies the minimum DOM changes.
 
 For lists it needs to know which item is which across renders. That is what \`key\` is for. The key tells React "this is the same logical item as before", so it can move the DOM node rather than destroy and rebuild it — and crucially, **component state follows the key**.
@@ -361,6 +381,13 @@ Rules:
       title: "Forms & Controlled Inputs",
       level: 3,
       summary: "The bread and butter of CRUD work — and the bugs that come with it.",
+      keyIdeas: [
+        "Controlled input: `value` + `onChange`; state is the source of truth. Uncontrolled: `defaultValue` + read on submit.",
+        "`value` without `onChange` freezes the field — React overwrites every keystroke.",
+        "Initialise form state with `\"\"`, never `undefined`/`null`, or the input flips uncontrolled → controlled.",
+        "One handler for all fields: `setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))`.",
+        "Always `e.preventDefault()`; disable submit while in flight; server validates regardless of the client.",
+      ],
       brief: `A **controlled** input takes its value from state and reports changes back:
 
 \`\`\`jsx
@@ -472,6 +499,13 @@ function handleChange(e) {
       title: "Data Fetching & Server State",
       level: 3,
       summary: "Loading, error, empty — and why server state is not UI state.",
+      keyIdeas: [
+        "Every fetch has four states: loading, error, empty, success — empty is not an error.",
+        "`fetch` only rejects on network failure; a 500 resolves. Check `res.ok`.",
+        "Responses arrive out of order — abort the previous request in cleanup or use a data library.",
+        "Nested fetches create a waterfall; start independent requests together, higher up.",
+        "Server state (cached, shared, stale-able) is not UI state — React Query handles caching, dedup, retries, invalidation.",
+      ],
       brief: `Every fetch has at least **four** states, and juniors ship two of them:
 
 1. Loading
@@ -578,6 +612,13 @@ setUsers(data);`,
       title: "Context, Composition & State Architecture",
       level: 3,
       summary: "Where state should live, and why context is not a state manager.",
+      keyIdeas: [
+        "Put state in the closest common ancestor of everything that needs it; push it down when only one branch does.",
+        "Try composition — pass the element as a prop or `children` — before reaching for context.",
+        "Context is a transport, not a store: every consumer re-renders when the value changes.",
+        "Memoise the provider value; an inline `{...}` object re-renders every consumer on every render.",
+        "Context suits rarely-changing, widely-needed values (theme, user); not per-keystroke data.",
+      ],
       brief: `**Where does state go?** Put it in the closest common ancestor of everything that needs it — "lifting state up". If only one branch uses it, push it back down. State that lives too high causes needless re-renders across the tree; state that lives too low gets duplicated and drifts.
 
 **Prop drilling** is passing a prop through components that do not use it. Before reaching for context, try **composition** — pass the element itself:
@@ -669,6 +710,13 @@ Good context candidates: theme, authenticated user, locale, feature flags. Bad o
       title: "Performance & Hooks Rules",
       level: 4,
       summary: "memo, useMemo, useCallback — and when they make things worse.",
+      keyIdeas: [
+        "Hooks are matched to state by call order — never call one inside a condition, loop, or after an early return.",
+        "`React.memo` compares props shallowly; an inline arrow or object prop defeats it completely.",
+        "`useMemo` caches a value, `useCallback` a function reference — they cost a comparison and retained memory.",
+        "Profile first. Virtualise long lists, lift expensive work, then memoise the measured hot path.",
+        "StrictMode double-runs effects in development to expose missing cleanup — fix the cleanup, not StrictMode.",
+      ],
       brief: `**Rules of Hooks**: call them at the top level of a component or another hook, unconditionally, in the same order every render. React matches hooks to their stored state **by call order**, so a hook inside an \`if\` shifts every subsequent slot and state silently attaches to the wrong hook. That is the whole reason for the rule.
 
 **The memoisation trio:**

@@ -23,10 +23,23 @@ export type AnswerProps = {
   item: DrillItem;
   response: Response;
   onChange: (r: Response) => void;
-  /** Set once submitted — answers become read-only and show verdicts. */
+  /**
+   * The most recent grade. May be set while `revealed` is false: that
+   * is the retry state — the learner missed once and gets one more
+   * go before the answer is shown, so only their wrong pick is marked.
+   */
   grade: Grade | null;
+  /** Once true the answer is shown and inputs lock. */
+  revealed: boolean;
   onSubmit: () => void;
 };
+
+/** Kinds that offer a second attempt after a first miss. */
+export const RETRYABLE_KINDS: ReadonlySet<DrillItem["kind"]> = new Set([
+  "mcq",
+  "predict-output",
+  "fill-blank",
+]);
 
 // ─────────────────────────────────────────────────────────────
 // Choice list — shared by mcq, multi and predict-output
@@ -37,44 +50,54 @@ function ChoiceList({
   selected,
   multi,
   grade,
-  disabled,
+  revealed,
   onToggle,
 }: {
   choices: Choice[];
   selected: Set<string>;
   multi: boolean;
   grade: Grade | null;
-  disabled: boolean;
+  revealed: boolean;
   onToggle: (id: string) => void;
 }) {
+  const retrying = grade !== null && !revealed;
+
+  // In a retry the first wrong pick is eliminated; everything else stays live.
+  const eliminated = useMemo(() => {
+    if (!retrying) return new Set<string>();
+    return new Set(
+      (grade?.choices ?? []).filter((c) => c.chosen && !c.correct).map((c) => c.id)
+    );
+  }, [retrying, grade]);
+
   // Keyboard shortcuts: 1-9 pick an option.
   useEffect(() => {
-    if (disabled) return;
+    if (revealed) return;
     function onKey(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (target && /^(INPUT|TEXTAREA)$/.test(target.tagName)) return;
       const n = Number.parseInt(e.key, 10);
-      if (n >= 1 && n <= choices.length) {
+      if (n >= 1 && n <= choices.length && !eliminated.has(choices[n - 1].id)) {
         e.preventDefault();
         onToggle(choices[n - 1].id);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [choices, disabled, onToggle]);
+  }, [choices, revealed, eliminated, onToggle]);
 
   return (
     <div className="flex flex-col gap-2">
       {choices.map((choice, index) => {
         const isSelected = selected.has(choice.id);
         const verdict = grade?.choices?.find((c) => c.id === choice.id);
-        const revealed = grade !== null;
+        const isEliminated = eliminated.has(choice.id);
 
-        // After submitting: green for correct answers, red for a wrong pick.
         let tone: "idle" | "picked" | "right" | "wrong" = "idle";
         if (revealed && verdict?.correct) tone = "right";
         else if (revealed && verdict?.chosen) tone = "wrong";
+        else if (isEliminated) tone = "wrong";
         else if (!revealed && isSelected) tone = "picked";
 
         const styles: Record<string, React.CSSProperties> = {
@@ -84,6 +107,8 @@ function ChoiceList({
           wrong: { background: "var(--bad-soft)", borderColor: "var(--bad)" },
         };
 
+        const disabled = revealed || isEliminated;
+
         return (
           <div key={choice.id}>
             <button
@@ -92,17 +117,18 @@ function ChoiceList({
               onClick={() => onToggle(choice.id)}
               aria-pressed={isSelected}
               className={cn(
-                "w-full text-left rounded-lg border px-3.5 py-3 flex items-start gap-3",
+                "w-full text-left rounded-lg border px-4 py-3.5 flex items-start gap-3",
                 "transition-all duration-150",
                 !disabled && "hover:brightness-[1.15] cursor-pointer",
-                disabled && "cursor-default"
+                disabled && "cursor-default",
+                isEliminated && "opacity-60"
               )}
               style={styles[tone]}
             >
               <span
                 className={cn(
-                  "flex-none mt-0.5 h-5 w-5 flex items-center justify-center text-[11px] font-semibold",
-                  multi ? "rounded-[5px]" : "rounded-full"
+                  "flex-none mt-0.5 h-6 w-6 flex items-center justify-center text-[12px] font-semibold",
+                  multi ? "rounded-[6px]" : "rounded-full"
                 )}
                 style={{
                   background:
@@ -121,7 +147,10 @@ function ChoiceList({
                 {tone === "right" ? "✓" : tone === "wrong" ? "✕" : index + 1}
               </span>
 
-              <span className="flex-1 min-w-0 text-[14px] leading-relaxed" style={{ color: "var(--text)" }}>
+              <span
+                className="flex-1 min-w-0 text-[15px] leading-[1.6]"
+                style={{ color: "var(--text)" }}
+              >
                 {choice.code ? (
                   <span className="block whitespace-pre-wrap">
                     <CodeInline code={choice.text} />
@@ -132,14 +161,18 @@ function ChoiceList({
               </span>
             </button>
 
-            {revealed && choice.explain && (verdict?.correct || verdict?.chosen) && (
-              <p
-                className="text-[12.5px] leading-relaxed mt-1.5 ml-9 pr-2 animate-rise"
-                style={{ color: "var(--text-muted)" }}
-              >
-                <Inline>{choice.explain}</Inline>
-              </p>
-            )}
+            {/* Per-option feedback: after reveal for the correct and chosen
+                options; during a retry, only for the eliminated one so it
+                nudges without giving the answer away. */}
+            {choice.explain &&
+              ((revealed && (verdict?.correct || verdict?.chosen)) || isEliminated) && (
+                <p
+                  className="text-[13.5px] leading-relaxed mt-1.5 ml-10 pr-2 animate-rise"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <Inline>{choice.explain}</Inline>
+                </p>
+              )}
           </div>
         );
       })}
@@ -151,7 +184,7 @@ function ChoiceList({
 // Single choice (mcq / predict-output)
 // ─────────────────────────────────────────────────────────────
 
-export function SingleChoice({ item, response, onChange, grade }: AnswerProps) {
+export function SingleChoice({ item, response, onChange, grade, revealed }: AnswerProps) {
   const payload = item.payload as McqPayload | PredictOutputPayload;
   const chosen =
     response.kind === "mcq" || response.kind === "predict-output" ? response.choiceId : null;
@@ -162,7 +195,7 @@ export function SingleChoice({ item, response, onChange, grade }: AnswerProps) {
       selected={new Set(chosen ? [chosen] : [])}
       multi={false}
       grade={grade}
-      disabled={grade !== null}
+      revealed={revealed}
       onToggle={(id) =>
         onChange(
           item.kind === "predict-output"
@@ -178,14 +211,14 @@ export function SingleChoice({ item, response, onChange, grade }: AnswerProps) {
 // Multi-select
 // ─────────────────────────────────────────────────────────────
 
-export function MultiChoice({ item, response, onChange, grade }: AnswerProps) {
+export function MultiChoice({ item, response, onChange, grade, revealed }: AnswerProps) {
   const payload = item.payload as MultiPayload;
   const chosen = response.kind === "multi" ? response.choiceIds : [];
   const correctCount = payload.choices.filter((c) => c.correct).length;
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[12px]" style={{ color: "var(--text-faint)" }}>
+      <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
         Select all that apply — {correctCount} of {payload.choices.length} are correct.
       </p>
       <ChoiceList
@@ -193,7 +226,7 @@ export function MultiChoice({ item, response, onChange, grade }: AnswerProps) {
         selected={new Set(chosen)}
         multi
         grade={grade}
-        disabled={grade !== null}
+        revealed={revealed}
         onToggle={(id) => {
           const next = chosen.includes(id) ? chosen.filter((c) => c !== id) : [...chosen, id];
           onChange({ kind: "multi", choiceIds: next });
@@ -207,10 +240,9 @@ export function MultiChoice({ item, response, onChange, grade }: AnswerProps) {
 // True / false
 // ─────────────────────────────────────────────────────────────
 
-export function TrueFalse({ item, response, onChange, grade }: AnswerProps) {
+export function TrueFalse({ item, response, onChange, revealed }: AnswerProps) {
   const payload = item.payload as TrueFalsePayload;
   const value = response.kind === "truefalse" ? response.value : null;
-  const revealed = grade !== null;
 
   return (
     <div className="grid grid-cols-2 gap-3">
@@ -237,7 +269,7 @@ export function TrueFalse({ item, response, onChange, grade }: AnswerProps) {
             disabled={revealed}
             onClick={() => onChange({ kind: "truefalse", value: option })}
             className={cn(
-              "rounded-lg border py-4 font-medium text-[15px] transition-all duration-150",
+              "rounded-lg border py-4 font-medium text-[16px] transition-all duration-150",
               !revealed && "hover:brightness-[1.15] cursor-pointer"
             )}
             style={styles[tone]}
@@ -254,12 +286,11 @@ export function TrueFalse({ item, response, onChange, grade }: AnswerProps) {
 // Fill in the blanks
 // ─────────────────────────────────────────────────────────────
 
-export function FillBlank({ item, response, onChange, grade, onSubmit }: AnswerProps) {
+export function FillBlank({ item, response, onChange, grade, revealed, onSubmit }: AnswerProps) {
   const payload = item.payload as FillBlankPayload;
   const values = response.kind === "fill-blank" ? response.values : {};
-  const revealed = grade !== null;
+  const retrying = grade !== null && !revealed;
 
-  // Split the template on {{id}} so blanks render as inputs inline.
   const segments = useMemo(() => {
     const parts: ({ type: "text"; value: string } | { type: "blank"; id: string })[] = [];
     const regex = /\{\{(\w+)\}\}/g;
@@ -281,10 +312,10 @@ export function FillBlank({ item, response, onChange, grade, onSubmit }: AnswerP
   return (
     <div className="flex flex-col gap-3">
       <div
-        className="rounded-lg border px-4 py-3.5 overflow-x-auto"
+        className="rounded-lg border px-4 py-4 overflow-x-auto"
         style={{ background: "var(--bg-inset)", borderColor: "var(--border)" }}
       >
-        <pre className="font-mono text-[13px] leading-[2] whitespace-pre-wrap">
+        <pre className="font-mono text-[14px] leading-[2.1] whitespace-pre-wrap">
           {segments.map((seg, i) => {
             if (seg.type === "text") {
               return (
@@ -296,13 +327,17 @@ export function FillBlank({ item, response, onChange, grade, onSubmit }: AnswerP
 
             const blank = payload.blanks.find((b) => b.id === seg.id);
             const verdict = grade?.blanks?.find((b) => b.id === seg.id);
+            // During a retry, blanks already correct are locked; only
+            // the wrong ones stay editable.
+            const locked = revealed || (retrying && verdict?.correct === true);
+            const marked = verdict !== undefined && (revealed || retrying);
 
             return (
               <input
                 key={i}
                 type="text"
                 value={values[seg.id] ?? ""}
-                disabled={revealed}
+                disabled={locked}
                 spellCheck={false}
                 autoComplete="off"
                 placeholder={blank?.hint ? "?" : ""}
@@ -316,16 +351,16 @@ export function FillBlank({ item, response, onChange, grade, onSubmit }: AnswerP
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !revealed) onSubmit();
                 }}
-                className="font-mono text-[13px] px-2 py-0.5 mx-0.5 rounded outline-none text-center"
+                className="font-mono text-[14px] px-2 py-0.5 mx-0.5 rounded outline-none text-center"
                 style={{
                   width: `${Math.max(6, (blank?.width ?? 8) + 1)}ch`,
-                  background: revealed
+                  background: marked
                     ? verdict?.correct
                       ? "var(--good-soft)"
                       : "var(--bad-soft)"
                     : "var(--surface)",
                   border: `1px solid ${
-                    revealed
+                    marked
                       ? verdict?.correct
                         ? "var(--good)"
                         : "var(--bad)"
@@ -345,14 +380,14 @@ export function FillBlank({ item, response, onChange, grade, onSubmit }: AnswerP
             b.hint ? (
               <span
                 key={b.id}
-                className="text-[11.5px] px-2 py-1 rounded-md border"
+                className="text-[12.5px] px-2 py-1 rounded-md border"
                 style={{
                   background: "var(--bg-inset)",
                   borderColor: "var(--border)",
-                  color: "var(--text-faint)",
+                  color: "var(--text-muted)",
                 }}
               >
-                <strong style={{ color: "var(--text-muted)" }}>{i + 1}.</strong> {b.hint}
+                <strong style={{ color: "var(--text)" }}>{i + 1}.</strong> {b.hint}
               </span>
             ) : null
           )}
@@ -362,9 +397,9 @@ export function FillBlank({ item, response, onChange, grade, onSubmit }: AnswerP
       {revealed &&
         grade?.blanks
           ?.filter((b) => !b.correct)
-          .map((b, i) => (
-            <p key={b.id} className="text-[12.5px] animate-rise" style={{ color: "var(--text-muted)" }}>
-              Blank {i + 1}: expected{" "}
+          .map((b) => (
+            <p key={b.id} className="text-[13.5px] animate-rise" style={{ color: "var(--text-muted)" }}>
+              Blank {Number(b.id)}: expected{" "}
               <code className="md-code" style={{ color: "var(--good)" }}>
                 {b.accept[0]}
               </code>
@@ -384,9 +419,8 @@ export function FillBlank({ item, response, onChange, grade, onSubmit }: AnswerP
 // Ordering
 // ─────────────────────────────────────────────────────────────
 
-export function OrderSteps({ item, response, onChange, grade }: AnswerProps) {
+export function OrderSteps({ item, response, onChange, grade, revealed }: AnswerProps) {
   const payload = item.payload as OrderPayload;
-  const revealed = grade !== null;
 
   // Shuffling reads Math.random, so it happens in an effect rather than
   // during render — and only once per item, so re-renders never reorder
@@ -403,7 +437,6 @@ export function OrderSteps({ item, response, onChange, grade }: AnswerProps) {
         const j = Math.floor(Math.random() * (i + 1));
         [ids[i], ids[j]] = [ids[j], ids[i]];
       }
-      // Never hand back the already-correct order.
       if (ids.length > 1 && ids.every((id, i) => id === payload.steps[i].id)) {
         [ids[0], ids[1]] = [ids[1], ids[0]];
       }
@@ -426,7 +459,7 @@ export function OrderSteps({ item, response, onChange, grade }: AnswerProps) {
   return (
     <div className="flex flex-col gap-2">
       {!revealed && (
-        <p className="text-[12px] mb-1" style={{ color: "var(--text-faint)" }}>
+        <p className="text-[13px] mb-1" style={{ color: "var(--text-muted)" }}>
           Use the arrows to put these in the correct order.
         </p>
       )}
@@ -445,15 +478,11 @@ export function OrderSteps({ item, response, onChange, grade }: AnswerProps) {
                   ? "var(--good-soft)"
                   : "var(--bad-soft)"
                 : "var(--surface)",
-              borderColor: revealed
-                ? wasRight
-                  ? "var(--good)"
-                  : "var(--bad)"
-                : "var(--border)",
+              borderColor: revealed ? (wasRight ? "var(--good)" : "var(--bad)") : "var(--border)",
             }}
           >
             <div
-              className="flex-none w-9 flex items-center justify-center text-[12px] font-semibold border-r"
+              className="flex-none w-10 flex items-center justify-center text-[13px] font-semibold border-r"
               style={{
                 color: revealed ? (wasRight ? "var(--good)" : "var(--bad)") : "var(--text-faint)",
                 borderColor: "var(--border)",
@@ -462,10 +491,10 @@ export function OrderSteps({ item, response, onChange, grade }: AnswerProps) {
               {index + 1}
             </div>
 
-            <div className="flex-1 py-2.5 pr-2 text-[13.5px] leading-relaxed" style={{ color: "var(--text)" }}>
+            <div className="flex-1 py-3 pr-2 text-[14.5px] leading-relaxed" style={{ color: "var(--text)" }}>
               {textById.get(id)}
               {revealed && verdict && !wasRight && (
-                <span className="ml-2 text-[11.5px]" style={{ color: "var(--bad)" }}>
+                <span className="ml-2 text-[12px]" style={{ color: "var(--bad)" }}>
                   (you had it at {verdict.givenIndex + 1})
                 </span>
               )}
@@ -478,7 +507,7 @@ export function OrderSteps({ item, response, onChange, grade }: AnswerProps) {
                   aria-label="Move up"
                   disabled={index === 0}
                   onClick={() => move(index, -1)}
-                  className="h-5 w-6 rounded text-[10px] disabled:opacity-25 hover:brightness-150"
+                  className="h-5 w-7 rounded text-[10px] disabled:opacity-25 hover:brightness-150"
                   style={{ background: "var(--bg-inset)", color: "var(--text-muted)" }}
                 >
                   ▲
@@ -488,7 +517,7 @@ export function OrderSteps({ item, response, onChange, grade }: AnswerProps) {
                   aria-label="Move down"
                   disabled={index === current.length - 1}
                   onClick={() => move(index, 1)}
-                  className="h-5 w-6 rounded text-[10px] disabled:opacity-25 hover:brightness-150"
+                  className="h-5 w-7 rounded text-[10px] disabled:opacity-25 hover:brightness-150"
                   style={{ background: "var(--bg-inset)", color: "var(--text-muted)" }}
                 >
                   ▼
@@ -513,19 +542,20 @@ const SELF_RATINGS: { value: SelfRating; label: string; hint: string; color: str
   { value: 4, label: "Nailed it", hint: "Would satisfy an interviewer", color: "var(--good)" },
 ];
 
-export function ExplainIt({ response, onChange, grade, item }: AnswerProps) {
+export function ExplainIt({ response, onChange, grade, revealed, item }: AnswerProps) {
   const payload = item.payload as ShortPayload;
   const text = response.kind === "short" ? response.text : "";
   const rating = response.kind === "short" ? response.selfRating : null;
-  const [revealed, setRevealed] = useState(false);
-  const showAnswer = revealed || grade !== null;
+  const [peeked, setPeeked] = useState(false);
+  const showAnswer = peeked || revealed;
+  const locked = grade !== null && revealed;
 
   return (
     <div className="flex flex-col gap-4">
       <div>
         <label
-          className="block text-[12px] mb-2"
-          style={{ color: "var(--text-faint)" }}
+          className="block text-[13.5px] mb-2"
+          style={{ color: "var(--text-muted)" }}
           htmlFor="explain-notes"
         >
           Say your answer out loud first — that&apos;s the actual practice. Jot the key points if it helps.
@@ -534,10 +564,10 @@ export function ExplainIt({ response, onChange, grade, item }: AnswerProps) {
           id="explain-notes"
           value={text}
           rows={4}
-          disabled={grade !== null}
+          disabled={locked}
           placeholder="Optional notes…"
           onChange={(e) => onChange({ kind: "short", text: e.target.value, selfRating: rating })}
-          className="w-full rounded-lg border px-3.5 py-3 text-[14px] leading-relaxed outline-none resize-y"
+          className="w-full rounded-lg border px-4 py-3 text-[15px] leading-relaxed outline-none resize-y"
           style={{
             background: "var(--bg-inset)",
             borderColor: "var(--border)",
@@ -547,42 +577,39 @@ export function ExplainIt({ response, onChange, grade, item }: AnswerProps) {
       </div>
 
       {!showAnswer ? (
-        <Button variant="secondary" onClick={() => setRevealed(true)}>
+        <Button variant="secondary" onClick={() => setPeeked(true)}>
           Reveal the model answer
         </Button>
       ) : (
         <div className="animate-rise flex flex-col gap-4">
           <div
-            className="rounded-lg border p-4"
+            className="rounded-lg border p-5"
             style={{ background: "var(--bg-inset)", borderColor: "var(--border)" }}
           >
             <div
-              className="text-[11px] font-semibold uppercase tracking-wider mb-2.5"
+              className="text-[11px] font-semibold uppercase tracking-wider mb-3"
               style={{ color: "var(--text-faint)" }}
             >
               Model answer
             </div>
-            <div
-              className="text-[14px] leading-[1.75] whitespace-pre-wrap"
-              style={{ color: "var(--text)" }}
-            >
+            <div className="text-[15.5px] leading-[1.8] whitespace-pre-wrap" style={{ color: "var(--text)" }}>
               {payload.modelAnswer}
             </div>
           </div>
 
           <div>
             <div
-              className="text-[11px] font-semibold uppercase tracking-wider mb-2"
+              className="text-[11px] font-semibold uppercase tracking-wider mb-2.5"
               style={{ color: "var(--text-faint)" }}
             >
               An interviewer is listening for
             </div>
-            <ul className="flex flex-col gap-1.5">
+            <ul className="flex flex-col gap-2">
               {payload.keyPoints.map((point, i) => (
                 <li
                   key={i}
-                  className="flex gap-2.5 text-[13.5px] leading-relaxed"
-                  style={{ color: "var(--text-muted)" }}
+                  className="flex gap-2.5 text-[14.5px] leading-relaxed"
+                  style={{ color: "var(--text)" }}
                 >
                   <span style={{ color: "var(--accent)" }}>•</span>
                   <span>{point}</span>
@@ -591,9 +618,9 @@ export function ExplainIt({ response, onChange, grade, item }: AnswerProps) {
             </ul>
           </div>
 
-          {grade === null && (
+          {!locked && (
             <div>
-              <div className="text-[12px] mb-2" style={{ color: "var(--text-muted)" }}>
+              <div className="text-[13.5px] mb-2" style={{ color: "var(--text-muted)" }}>
                 How did you do? This sets when you&apos;ll see it again.
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -603,22 +630,20 @@ export function ExplainIt({ response, onChange, grade, item }: AnswerProps) {
                     <button
                       key={option.value}
                       type="button"
-                      onClick={() =>
-                        onChange({ kind: "short", text, selfRating: option.value })
-                      }
-                      className="rounded-lg border px-3 py-2.5 text-left transition-all duration-150 hover:brightness-125"
+                      onClick={() => onChange({ kind: "short", text, selfRating: option.value })}
+                      className="rounded-lg border px-3 py-3 text-left transition-all duration-150 hover:brightness-125"
                       style={{
                         background: selected ? "var(--accent-soft)" : "var(--surface)",
                         borderColor: selected ? option.color : "var(--border)",
                       }}
                     >
                       <div
-                        className="text-[13px] font-medium"
+                        className="text-[14px] font-medium"
                         style={{ color: selected ? option.color : "var(--text)" }}
                       >
                         {option.label}
                       </div>
-                      <div className="text-[11px] mt-0.5" style={{ color: "var(--text-faint)" }}>
+                      <div className="text-[12px] mt-0.5" style={{ color: "var(--text-faint)" }}>
                         {option.hint}
                       </div>
                     </button>
@@ -637,7 +662,7 @@ export function ExplainIt({ response, onChange, grade, item }: AnswerProps) {
 // Write code
 // ─────────────────────────────────────────────────────────────
 
-export function WriteCode({ item, response, onChange, grade }: AnswerProps) {
+export function WriteCode({ item, response, onChange, grade, revealed }: AnswerProps) {
   const payload = item.payload as { starterCode: string; solutionCode: string };
   const code = response.kind === "code" ? response.code : "";
   const [showSolution, setShowSolution] = useState(false);
@@ -654,16 +679,16 @@ export function WriteCode({ item, response, onChange, grade }: AnswerProps) {
     <div className="flex flex-col gap-3">
       <LazyEditor
         value={code || payload.starterCode}
-        readOnly={grade !== null}
+        readOnly={revealed}
         onChange={(next) => onChange({ kind: "code", code: next })}
       />
 
-      {grade?.tests && (
+      {revealed && grade?.tests && (
         <div className="flex flex-col gap-1.5 animate-rise">
           {grade.tests.map((test, i) => (
             <div
               key={i}
-              className="rounded-lg border px-3 py-2.5 text-[12.5px]"
+              className="rounded-lg border px-3.5 py-3 text-[13.5px]"
               style={{
                 background: test.passed ? "var(--good-soft)" : "var(--bad-soft)",
                 borderColor: test.passed ? "var(--good)" : "var(--bad)",
@@ -676,7 +701,7 @@ export function WriteCode({ item, response, onChange, grade }: AnswerProps) {
                 <span style={{ color: "var(--text)" }}>{test.testCase.description}</span>
                 {test.testCase.isEdgeCase && (
                   <span
-                    className="text-[10px] px-1.5 py-0.5 rounded"
+                    className="text-[10.5px] px-1.5 py-0.5 rounded"
                     style={{ background: "var(--warn-soft)", color: "var(--warn)" }}
                   >
                     edge
@@ -684,7 +709,7 @@ export function WriteCode({ item, response, onChange, grade }: AnswerProps) {
                 )}
               </div>
               {!test.passed && (
-                <div className="mt-1.5 ml-5 font-mono text-[11.5px]" style={{ color: "var(--text-muted)" }}>
+                <div className="mt-1.5 ml-5 font-mono text-[12.5px]" style={{ color: "var(--text-muted)" }}>
                   {test.error ? (
                     test.error
                   ) : (
@@ -701,7 +726,7 @@ export function WriteCode({ item, response, onChange, grade }: AnswerProps) {
         </div>
       )}
 
-      {grade !== null && (
+      {revealed && (
         <div>
           <Button size="sm" variant="ghost" onClick={() => setShowSolution((s) => !s)}>
             {showSolution ? "Hide" : "Show"} a reference solution
@@ -734,7 +759,7 @@ function LazyEditor(props: { value: string; readOnly: boolean; onChange: (v: str
   if (!Editor) {
     return (
       <div
-        className="rounded-lg border p-4 font-mono text-[13px] min-h-[180px]"
+        className="rounded-lg border p-4 font-mono text-[13.5px] min-h-[180px]"
         style={{ background: "var(--bg-inset)", borderColor: "var(--border)", color: "var(--text-faint)" }}
       >
         Loading editor…
