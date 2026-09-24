@@ -25,9 +25,12 @@ export function CodeEditor({ value, onChange, readOnly = false }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
 
-  // Keep the latest handler without re-creating the editor on every render.
+  // Keep the latest handler without re-creating the editor on every
+  // render. Updated in an effect: writing refs during render is impure.
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   // Mount once. Re-creating on `value` changes would fight the user's cursor.
   useEffect(() => {
@@ -46,7 +49,17 @@ export function CodeEditor({ value, onChange, readOnly = false }: Props) {
         javascript(),
         oneDark,
         syntaxHighlighting(defaultHighlightStyle),
-        keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+        // Mod-Enter belongs to the drill session ("run my code"), so it
+        // must not also insert a blank line here.
+        keymap.of([
+          ...closeBracketsKeymap,
+          ...defaultKeymap.filter((binding) => binding.key !== "Mod-Enter"),
+          ...historyKeymap,
+          indentWithTab,
+        ]),
+        EditorView.contentAttributes.of({
+          "aria-label": "Code editor. Tab indents; press Escape then Tab to leave.",
+        }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString());
         }),
@@ -91,7 +104,7 @@ export function CodeEditor({ value, onChange, readOnly = false }: Props) {
   return (
     <div
       ref={host}
-      className="rounded-lg overflow-hidden border"
+      className="cm-host rounded-lg overflow-hidden border"
       style={{ borderColor: "var(--border)", opacity: readOnly ? 0.75 : 1 }}
     />
   );

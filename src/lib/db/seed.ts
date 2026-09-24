@@ -5,6 +5,18 @@
  * are upserted by their deterministic ids, so re-running picks up
  * content edits without touching user progress (attempts, cards, streaks).
  *
+ * Items that disappear from content are **unpublished, not deleted**.
+ * `attempts` and `user_cards` reference items with ON DELETE CASCADE,
+ * so a hard delete — say, after renaming an item id — would silently
+ * erase the learner's history for it. Unpublished items drop out of
+ * sessions and every progress total; if the id comes back, so does the
+ * history. Modules and tracks are kept for the same reason (deleting
+ * one cascades to its items); ones with no published items are hidden
+ * by the progress queries.
+ *
+ * The whole run is one transaction: a failure part-way leaves the
+ * database exactly as it was.
+ *
  *   npm run db:seed     — upsert content
  *   npm run db:reset    — delete the database and seed from scratch
  */
@@ -15,10 +27,9 @@ import path from "path";
 import * as schema from "./schema";
 import { TRACKS, resolveConcepts, contentStats } from "@/content";
 import { LEVEL_META, type Level } from "@/types";
+import { DEFAULT_USER_ID } from "@/lib/user";
 
-const DEFAULT_USER_ID = "default-user";
-
-const dbPath = path.join(process.cwd(), "reps.db");
+const dbPath = process.env.REPS_DB_PATH || path.join(process.cwd(), "reps.db");
 const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("foreign_keys = ON");
@@ -29,9 +40,7 @@ function now() {
 }
 
 // ─── Schema (idempotent) ───
-function createTables() {
-  migrate();
-  sqlite.exec(`
+const SCHEMA_DDL = `
     CREATE TABLE IF NOT EXISTS tracks (
       id TEXT PRIMARY KEY,
       slug TEXT NOT NULL UNIQUE,
@@ -164,20 +173,68 @@ function createTables() {
       seconds INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
-  `);
+  `;
+
+function createTables() {
+  migrate();
+  sqlite.exec(SCHEMA_DDL);
 }
 
-/** Additive column migrations for databases created by earlier versions. */
+/**
+ * Additive migrations for databases created by earlier versions.
+ *
+ * Rather than a hand-kept list of "columns added since", this builds
+ * the current schema in an in-memory database and adds whatever
+ * columns an existing table is missing. It runs *before* the DDL so the
+ * CREATE INDEX statements never reference a column that is not there
+ * yet. It only ever adds; a change it cannot express as ADD COLUMN
+ * (a new NOT NULL column with no default) fails loudly and points at
+ * `npm run db:reset`.
+ */
 function migrate() {
-  const hasModules = sqlite
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='modules'")
-    .get();
-  if (!hasModules) return;
-  const columns = sqlite
-    .prepare("PRAGMA table_info(modules)")
-    .all() as { name: string }[];
-  if (!columns.some((c) => c.name === "key_ideas")) {
-    sqlite.exec("ALTER TABLE modules ADD COLUMN key_ideas TEXT NOT NULL DEFAULT '[]'");
+  const reference = new Database(":memory:");
+  try {
+    reference.exec(SCHEMA_DDL);
+    const tables = reference
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as { name: string }[];
+
+    for (const { name: table } of tables) {
+      const exists = sqlite
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table);
+      if (!exists) continue; // created fresh by the DDL
+
+      const have = new Set(
+        (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+          (c) => c.name
+        )
+      );
+      const want = reference.prepare(`PRAGMA table_info(${table})`).all() as {
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+        pk: number;
+      }[];
+
+      for (const col of want) {
+        if (have.has(col.name)) continue;
+        if (col.pk || (col.notnull && col.dflt_value === null)) {
+          throw new Error(
+            `Table "${table}" is missing column "${col.name}", which cannot be added in place. ` +
+              "Run `npm run db:reset` (this clears progress)."
+          );
+        }
+        const parts = [`ALTER TABLE ${table} ADD COLUMN ${col.name} ${col.type}`];
+        if (col.notnull) parts.push("NOT NULL");
+        if (col.dflt_value !== null) parts.push(`DEFAULT ${col.dflt_value}`);
+        sqlite.exec(parts.join(" "));
+        console.log(`  migrated  ${table}.${col.name}`);
+      }
+    }
+  } finally {
+    reference.close();
   }
 }
 
@@ -330,6 +387,8 @@ function seed() {
               interviewTip: item.interviewTip ?? null,
               estSeconds: item.estSeconds,
               difficulty: item.difficulty,
+              // Back in content after being removed: publish it again.
+              isPublished: true,
               updatedAt: timestamp,
             },
           })
@@ -360,14 +419,16 @@ function seed() {
       .run();
   });
 
-  // ─── Prune content removed from the source files ───
-  const validItemIds = [...seenItemIds];
-  const placeholders = validItemIds.map(() => "?").join(",");
+  // ─── Unpublish content removed from the source files ───
+  // Soft delete: see the header comment. json_each keeps this one bound
+  // parameter however large the curriculum grows.
   const removed = sqlite
     .prepare(
-      `DELETE FROM items WHERE author_id IS NULL AND id NOT IN (${placeholders})`
+      `UPDATE items SET is_published = 0, updated_at = ?
+       WHERE author_id IS NULL AND is_published = 1
+         AND id NOT IN (SELECT value FROM json_each(?))`
     )
-    .run(...validItemIds);
+    .run(timestamp, JSON.stringify([...seenItemIds]));
 
   // ─── Report ───
   const kinds = Object.entries(stats.byKind)
@@ -388,13 +449,14 @@ function seed() {
   console.log(`  levels    ${levels}`);
   console.log(`  kinds     ${kinds}`);
   if (removed.changes > 0) {
-    console.log(`  pruned    ${removed.changes} item(s) no longer in content`);
+    console.log(`  unpublished ${removed.changes} item(s) no longer in content (history kept)`);
   }
   console.log("");
 }
 
 try {
-  seed();
+  // One transaction: all of it lands, or none of it does.
+  sqlite.transaction(seed)();
 } catch (err) {
   console.error("\n  Seed failed:\n", err);
   process.exit(1);

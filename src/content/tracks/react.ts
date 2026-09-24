@@ -136,6 +136,26 @@ function add(item) {
             { t: "Nothing — this is the recommended pattern", why: "It is a documented anti-pattern." },
           ],
         }),
+        multi("react-basics-useref", {
+          q: "Which are appropriate uses of `useRef`?",
+          why: "A ref is a **mutable box that persists across renders and does not trigger a render when changed**. That makes it right for two families of job.\n\nFirst, **DOM access**: `ref={inputRef}` then `inputRef.current.focus()`, measuring an element, or handing a node to a non-React library such as a chart or map.\n\nSecond, **instance-like values that the UI does not display**: a timer or interval id you need to clear later, an `AbortController`, or a flag like 'has this already been sent?'.\n\nWhat it is wrong for: anything the screen shows. Changing `ref.current` does not re-render, so the UI goes stale — that is `useState`'s job. And reading or writing `ref.current` during render (outside effects and handlers) makes rendering impure, which is a common source of subtle bugs.",
+          tip: "The one-line definition — 'a mutable value that survives renders without causing one' — covers every correct use.",
+          c: ["hooks-rules", "rendering"],
+          d: 1,
+          choices: [
+            { t: "Holding a DOM node so you can call `.focus()` on it", ok: true },
+            { t: "Storing an interval id so it can be cleared later", ok: true },
+            { t: "Holding the `AbortController` for an in-flight request", ok: true },
+            {
+              t: "Holding a counter that is displayed on screen, to avoid re-renders",
+              why: "Mutating a ref does not re-render, so the displayed value goes stale. Shown values belong in state.",
+            },
+            {
+              t: "Forcing a re-render by assigning to `ref.current`",
+              why: "Assigning to a ref never schedules a render — that is precisely its defining property.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -491,6 +511,32 @@ function handleChange(e) {
           d: 3,
           secs: 140,
         }),
+        mcq("react-form-uncontrolled", {
+          q: "What is an uncontrolled input, and when is it a reasonable choice?",
+          why: "An **uncontrolled** input keeps its value **in the DOM**, not in React state. You give it an initial value with `defaultValue` and read it when you need it — through a ref, or with `new FormData(event.currentTarget)` in the submit handler.\n\nA **controlled** input has `value` bound to state and an `onChange` that updates it, so React is the single source of truth and re-renders on every keystroke.\n\nUncontrolled is perfectly reasonable when you only need the values **on submit**: a simple contact or login form, file inputs (which are always uncontrolled, since their value cannot be set programmatically), or large forms where per-keystroke re-renders matter. It is also the approach libraries like React Hook Form use under the hood for performance.\n\nControlled wins when the UI must react to the value as it changes: live validation, formatting as you type, disabling the submit button, or one field depending on another.",
+          tip: "Mention that file inputs are always uncontrolled — it is a small detail that shows hands-on experience.",
+          c: ["controlled-inputs", "component-design"],
+          d: 2,
+          choices: [
+            {
+              t: "The DOM holds the value and you read it on submit via a ref or `FormData`; fine when you do not need the value while typing",
+              ok: true,
+              why: "Correct — and it avoids a re-render per keystroke.",
+            },
+            {
+              t: "An input with no `name` attribute, which cannot be submitted",
+              why: "Names matter for `FormData`, but 'uncontrolled' is about where the value lives.",
+            },
+            {
+              t: "A deprecated pattern that React warns against",
+              why: "It is fully supported; React only warns when an input switches between controlled and uncontrolled.",
+            },
+            {
+              t: "An input whose value is set by `value` without an `onChange`",
+              why: "That is a read-only controlled input — the frozen-field bug — not an uncontrolled one.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -604,6 +650,62 @@ setUsers(data);`,
             { t: "Render nothing until data arrives, with no indicator", why: "Looks broken to the user." },
           ],
         }),
+        multi("react-data-error-boundary", {
+          q: "Which errors will a React error boundary catch?",
+          why: "Error boundaries catch errors thrown **while React is rendering** the tree below them: in a child's render (function body), in lifecycle methods, and in constructors. They then render a fallback UI instead of unmounting the whole app.\n\nThey do **not** catch errors in **event handlers** (those run outside rendering — use `try/catch`), in **asynchronous code** such as `setTimeout` callbacks or promise rejections from a fetch, in **server-side rendering**, or in the boundary component itself.\n\nThe practical pattern for async errors is to catch them and store them in state. To show one through a boundary, rethrow it during the next render — some data libraries offer an option that does exactly this.\n\nBoundaries still have to be written as **class components** using `getDerivedStateFromError` / `componentDidCatch`; most teams use the small `react-error-boundary` package instead of writing their own.",
+          tip: "The 'not event handlers, not async' exclusions are what the question is really testing.",
+          c: ["error-handling", "rendering"],
+          d: 2,
+          choices: [
+            { t: "An error thrown while a child component renders", ok: true },
+            { t: "An error thrown in a child's constructor or lifecycle method", ok: true },
+            { t: "An error thrown inside an `onClick` handler", why: "Event handlers run outside rendering; catch these with `try/catch`." },
+            { t: "A rejected promise from a `fetch` in `useEffect`", why: "Async errors are not caught unless you store them and rethrow during render." },
+            { t: "An error in a `setTimeout` callback", why: "It runs later, outside React's render, so no boundary sees it." },
+          ],
+        }),
+        mcq("react-data-hydration", {
+          q: "A server-rendered page logs 'Hydration failed because the server rendered HTML didn't match the client'. Which is a typical cause?",
+          why: "Rendering something that **differs between server and client on the first render** — most commonly `new Date().toLocaleString()` or `Math.random()` in render, or a branch on `typeof window !== \"undefined\"`, which is false on the server and true in the browser.\n\n**Hydration** means React attaching to server-produced HTML instead of creating it: it renders the tree again in the browser and expects exactly the same output, so it can reuse the existing DOM and just wire up event handlers. A mismatch means it cannot trust that DOM.\n\nOther causes: invalid HTML nesting such as a `<div>` inside a `<p>` (the browser repairs the markup, so the DOM no longer matches), and browser extensions that inject elements.\n\nThe fix is to make the first client render identical to the server's, then apply browser-only values in an effect after mount (or skip server rendering for that one component).",
+          tip: "Define hydration in one sentence before naming the cause — it proves you know why the mismatch matters.",
+          c: ["rendering", "effects"],
+          d: 3,
+          choices: [
+            {
+              t: "Rendering a timestamp or random value, or branching on `window`, so the first client render differs from the server's",
+              ok: true,
+              why: "Correct — the server and first client render must produce identical markup.",
+            },
+            {
+              t: "Using `useState` in a server-rendered component",
+              why: "State is fine; it is initialised identically on both sides.",
+            },
+            {
+              t: "The API returned an error during the fetch",
+              why: "That affects what you render, but not whether server and client agree.",
+            },
+            {
+              t: "The page uses CSS modules",
+              why: "Styling approach does not change the rendered element tree.",
+            },
+          ],
+        }),
+        short("react-data-rendering-modes", {
+          q: "*\"Explain the difference between client-side rendering, server-side rendering and static site generation. When would you use each?\"*",
+          why: "A standard front-end systems question. The interviewer wants the mechanism of each, the trade-off in one line, and a sensible default — not a framework sales pitch.",
+          model:
+            "With client-side rendering, the server sends a mostly empty HTML shell and a JavaScript bundle; the browser downloads and runs the JS, fetches data, and builds the page. It's simple to host and great for app-like screens behind a login, but the first meaningful paint waits on the JS, and crawlers that don't run JavaScript see very little.\n\nServer-side rendering generates the HTML for each request on the server, with the data already in it. The user sees content quickly and SEO is good, then the JavaScript loads and hydrates the page so it becomes interactive. The cost is a server doing work per request, and the page isn't interactive until hydration finishes.\n\nStatic site generation renders the HTML once at build time and serves it from a CDN. It's the fastest and cheapest to serve, but the content is only as fresh as the last build — frameworks soften that with incremental regeneration on a timer or on demand.\n\nI'd pick per page: SSG for marketing pages, docs and blog posts; SSR for public pages with per-request or frequently changing data where SEO matters, like product pages; and CSR for authenticated dashboards where SEO is irrelevant. Frameworks like Next.js let you mix these in one app.",
+          points: [
+            "CSR: empty shell + JS builds the page in the browser",
+            "SSR: HTML generated per request, then hydrated",
+            "SSG: HTML generated at build time, served from a CDN",
+            "Trade-offs: first paint, SEO, server cost, freshness",
+            "Choose per page; frameworks mix them",
+          ],
+          c: ["rendering", "performance", "deployment"],
+          d: 2,
+          secs: 120,
+        }),
       ],
     }),
 
@@ -700,6 +802,58 @@ Good context candidates: theme, authenticated user, locale, feature flags. Bad o
             { t: "Context, immediately", why: "Works, but adds re-render coupling before it is needed." },
             { t: "Redux", why: "A large addition for a local structural problem." },
             { t: "A module-level global variable", why: "Invisible to React's render cycle — it will not update the UI." },
+          ],
+        }),
+        mcq("react-ctx-usereducer", {
+          q: "When is `useReducer` a better fit than several `useState` calls?",
+          why: "When **several pieces of state change together according to named transitions**. A checkout with `status`, `items`, `error` and `discount`, where 'apply coupon' touches three of them at once, is clearer as `dispatch({ type: \"couponApplied\", code })` handled by one reducer than as three setters sprinkled through event handlers that must be kept consistent by hand.\n\nThe benefits: all the update logic lives in one **pure function** you can unit-test without rendering anything; impossible combinations are easier to prevent; and `dispatch` has a stable identity, so it can be passed down (often through Context) without breaking memoisation.\n\nFor a single independent value — a toggle, an input's text — `useState` is simpler and the right choice. Neither is faster; `useState` is in fact implemented on top of the same mechanism.",
+          tip: "Say 'related state with named transitions' — then mention the reducer is testable in isolation.",
+          c: ["component-design", "hooks-rules"],
+          d: 2,
+          choices: [
+            {
+              t: "When related values change together through well-defined transitions, and you want that logic in one testable function",
+              ok: true,
+              why: "Correct — centralised, pure update logic.",
+            },
+            {
+              t: "Whenever performance matters, because reducers skip re-renders",
+              why: "A dispatch that produces new state re-renders just like a setter.",
+            },
+            {
+              t: "Only when using Redux",
+              why: "`useReducer` is built into React and needs no library.",
+            },
+            {
+              t: "When the state is a single boolean toggle",
+              why: "That is the textbook case for `useState`.",
+            },
+          ],
+        }),
+        mcq("react-ctx-portal", {
+          q: "A modal rendered through `createPortal(modal, document.body)` contains a button. Its click event bubbles to…",
+          why: "**Its React parent**, not just its DOM parent. A portal moves where the element is placed **in the DOM** — typically `document.body`, so it escapes a parent's `overflow: hidden` or stacking context and z-index — but it stays in the same place **in the React tree**.\n\nSo events bubble through React ancestors as if the modal were rendered inline: an `onClick` on the component that opened the modal will see clicks inside it. Context flows the same way, so the modal can still read the theme or current user from providers above its React parent.\n\nThe bubbling behaviour occasionally surprises people — a click inside the modal triggering a 'click outside to close' handler on a React ancestor, for instance — and `event.stopPropagation()` in the modal is the usual fix.\n\nPortals are the standard tool for modals, tooltips, dropdown menus and toasts.",
+          tip: "State both halves: DOM position changes, React tree position does not.",
+          c: ["component-design", "rendering"],
+          d: 3,
+          choices: [
+            {
+              t: "React ancestors of the component that rendered the portal, even though the DOM node is in `body`",
+              ok: true,
+              why: "Correct — events and context follow the React tree.",
+            },
+            {
+              t: "Only `document.body`, since that is its DOM parent",
+              why: "React's synthetic events propagate along the React tree, which is the part that surprises people.",
+            },
+            {
+              t: "Nowhere — portals stop event propagation",
+              why: "Propagation continues through React ancestors unless you stop it.",
+            },
+            {
+              t: "Both, so each handler fires twice",
+              why: "Each handler fires once; the bubbling path simply follows the React tree.",
+            },
           ],
         }),
       ],
@@ -813,6 +967,32 @@ They are **not free**: each costs a dependency comparison, retains references (m
           c: ["performance", "memoization", "rendering"],
           d: 3,
           secs: 170,
+        }),
+        mcq("react-perf-lazy", {
+          q: "What does `const Reports = React.lazy(() => import(\"./Reports\"))` achieve?",
+          why: "**Code splitting.** The dynamic `import()` tells the bundler to put `Reports` and its dependencies in a **separate chunk**. That chunk is not downloaded with the main bundle; it is fetched the first time `<Reports />` actually renders, so users who never open the reports page never pay for it.\n\nWhile the chunk loads, the component suspends, so it must sit inside a **`<Suspense fallback={<Spinner />}>`** boundary, which renders the fallback until the code arrives. `React.lazy` expects the module's **default export** to be the component.\n\nRoute-level splitting is the usual starting point — each page its own chunk — followed by heavy, rarely-used components such as charts, editors or maps. Splitting tiny components gains nothing and adds network requests.\n\nIf the chunk fails to load (for example, after a redeploy removed old files), the error is thrown during render, so an error boundary should sit around it too.",
+          tip: "Pair it with 'split by route first' — it shows you apply it with judgement.",
+          c: ["performance", "rendering", "tooling"],
+          d: 2,
+          choices: [
+            {
+              t: "`Reports` is split into its own bundle chunk, downloaded on first render, with a `Suspense` fallback shown meanwhile",
+              ok: true,
+              why: "Correct — smaller initial bundle, deferred loading.",
+            },
+            {
+              t: "`Reports` renders lazily in idle time, but its code is still in the main bundle",
+              why: "The dynamic `import()` is what moves it into a separate chunk.",
+            },
+            {
+              t: "It memoises `Reports` so it never re-renders",
+              why: "That is `React.memo`.",
+            },
+            {
+              t: "It renders `Reports` on the server only",
+              why: "It is a client-side loading mechanism, unrelated to server components.",
+            },
+          ],
         }),
       ],
     }),

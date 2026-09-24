@@ -444,6 +444,70 @@ export const CONCEPTS: ConceptDef[] = [
     explanation:
       "Build once, promote the same artefact through environments, and keep deploys reversible. If the fix for a bad release is 'roll forward and hope', the pipeline is not finished.",
   },
+
+  {
+    slug: "functions",
+    name: "Functions as Values",
+    description: "Higher-order functions, callbacks, currying and binding.",
+    explanation:
+      "In JavaScript a function is a value: it can be passed, returned and stored. That single fact is behind callbacks, higher-order array methods, currying, `bind`, and most of what makes the language feel different from C#. The trap is `this`, which arrows capture and regular functions resolve at call time.",
+  },
+  {
+    slug: "dom-events",
+    name: "DOM & Events",
+    description: "How the browser dispatches events and lets you intercept them.",
+    explanation:
+      "An event travels down from `window` to the target (capture) and back up (bubble). Delegation attaches one listener to an ancestor and inspects `event.target`, which is cheaper than one listener per element and survives re-rendering. `preventDefault` stops the default action; `stopPropagation` stops the travel.",
+  },
+  {
+    slug: "storage",
+    name: "Browser Storage",
+    description: "Cookies vs localStorage vs sessionStorage, and what each is for.",
+    explanation:
+      "Cookies are small, sent with every matching request and the only option the server can set; `localStorage` persists per origin and is readable by any script on the page; `sessionStorage` is per tab. None of them is a safe place for a secret.",
+  },
+  {
+    slug: "iteration",
+    name: "Iteration Protocols",
+    description: "Iterables, iterators and generators.",
+    explanation:
+      "Anything with a `[Symbol.iterator]` method works with `for…of`, spread and destructuring. Generators (`function*`) build iterators lazily with `yield`, which is how you produce a sequence without materialising it — and, in C#, exactly what `yield return` does.",
+  },
+  {
+    slug: "clr",
+    name: "The CLR & Managed Code",
+    description: "What the .NET runtime does for you — and what it doesn't.",
+    explanation:
+      "C# compiles to IL; the CLR JIT-compiles it, manages memory with a generational garbage collector, enforces type safety and runs finalizers on its own schedule. Managed code lives inside those guarantees; unmanaged resources (handles, sockets) still need deterministic disposal.",
+  },
+  {
+    slug: "delegates",
+    name: "Delegates & Events",
+    description: "Type-safe function references and the publish/subscribe layer over them.",
+    explanation:
+      "A delegate is a type describing a method signature; an instance references one or more methods. `event` restricts outsiders to subscribe/unsubscribe, which is the Observer pattern built into the language. Forgotten unsubscriptions are the classic managed-memory leak.",
+  },
+  {
+    slug: "solid",
+    name: "SOLID",
+    description: "Five design principles, each named after the smell it prevents.",
+    explanation:
+      "Single responsibility, open/closed, Liskov substitution, interface segregation, dependency inversion. Interviewers rarely want the definitions — they want a concrete change that each principle would have made painless, and the honesty to say when applying one is overkill.",
+  },
+  {
+    slug: "design-patterns",
+    name: "Design Patterns",
+    description: "Named solutions, and the judgement of when not to use them.",
+    explanation:
+      "Factory, Strategy, Singleton, Repository, Observer — vocabulary for shapes that recur. The senior skill is recognising when the framework already provides one (EF Core's DbContext is a unit of work; C# events are Observer) and resisting patterns that add indirection without removing a real problem.",
+  },
+  {
+    slug: "reflection",
+    name: "Reflection & Late Binding",
+    description: "Inspecting and invoking types at runtime.",
+    explanation:
+      "Reflection reads metadata and calls members by name at runtime; `dynamic` defers binding to runtime too. Both are slower and lose compile-time checking, so they belong in frameworks, serialisers and interop — not in everyday application code.",
+  },
 ];
 
 export const CONCEPT_BY_SLUG = new Map(CONCEPTS.map((c) => [c.slug, c]));

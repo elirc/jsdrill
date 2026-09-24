@@ -11,6 +11,8 @@
 import { TRACKS } from "../src/content";
 import { CONCEPT_BY_SLUG } from "../src/content/concepts";
 import { grade } from "../src/lib/grader";
+import { serverGradeOptions } from "../src/lib/executor.server";
+import { ITEM_KINDS, LEVELS } from "../src/types";
 import type {
   CodePayload,
   FillBlankPayload,
@@ -70,6 +72,9 @@ function warn(id: string, message: string) {
  * invisible in the source but obvious to a learner.
  */
 function checkProse(id: string, label: string, text: string) {
+  const fences = (text.match(/```/g) ?? []).length;
+  if (fences % 2 !== 0) fail(id, `${label} has an unclosed \`\`\` fence`);
+
   // Fenced blocks legitimately contain backticks.
   const prose = text.replace(/```[\s\S]*?```/g, "");
 
@@ -86,17 +91,44 @@ function checkProse(id: string, label: string, text: string) {
   }
 }
 
+/** Ids that must be unique within one item (choices, blanks, steps). */
+function checkUniqueIds(id: string, label: string, ids: string[]) {
+  const seen = new Set<string>();
+  for (const x of ids) {
+    if (!x) fail(id, `a ${label} has an empty id`);
+    if (seen.has(x)) fail(id, `duplicate ${label} id "${x}"`);
+    seen.add(x);
+  }
+}
+
 let itemCount = 0;
 const allIds = new Set<string>();
 const usedConcepts = new Set<string>();
+// Tracks and modules get global ids from their slugs (`track-x`,
+// `mod-x`), so a repeated slug would silently merge two of them.
+const trackSlugs = new Set<string>();
+const moduleSlugs = new Map<string, string>();
 
 for (const track of TRACKS) {
+  if (trackSlugs.has(track.slug)) fail(track.slug, "duplicate track slug");
+  trackSlugs.add(track.slug);
   if (track.modules.length === 0) fail(track.slug, "track has no modules");
 
   const levels = new Set(track.modules.map((m) => m.level));
   if (!levels.has(1)) warn(track.slug, "no level-1 module — nowhere for a beginner to start");
+  const top = Math.max(...track.modules.map((m) => m.level));
+  const gaps = LEVELS.filter((l) => l < top && !levels.has(l));
+  if (gaps.length) {
+    // Fine — unlocking passes through empty levels — but worth knowing.
+    warn(track.slug, `no module at ${gaps.map((l) => `L${l}`).join("/")}; unlock skips straight past it`);
+  }
 
   for (const mod of track.modules) {
+    const owner = moduleSlugs.get(mod.slug);
+    if (owner) fail(`${track.slug}/${mod.slug}`, `module slug already used in track "${owner}"`);
+    moduleSlugs.set(mod.slug, track.slug);
+    if (!LEVELS.includes(mod.level)) fail(`${track.slug}/${mod.slug}`, `level ${mod.level} is not 1–4`);
+
     if (mod.brief.trim().length < 200) {
       fail(`${track.slug}/${mod.slug}`, "brief is too short to teach anything");
     }
@@ -123,6 +155,9 @@ for (const track of TRACKS) {
         fail(id, "explanation is too short — every item must teach");
       }
       if (!authored.prompt.trim()) fail(id, "empty prompt");
+      if (!ITEM_KINDS.includes(authored.kind)) fail(id, `unknown kind "${authored.kind}"`);
+      if (![1, 2, 3].includes(authored.difficulty)) fail(id, `difficulty ${authored.difficulty} is not 1–3`);
+      if (!(authored.estSeconds > 0)) fail(id, "estSeconds must be positive");
 
       checkProse(id, "prompt", authored.prompt);
       checkProse(id, "explanation", authored.explanation);
@@ -145,7 +180,9 @@ for (const track of TRACKS) {
         warn(id, "no concepts tagged — it won't appear in the concept library");
       }
 
-      // The grader operates on `Item`, so build the runtime shape.
+      // The grader operates on `Item`, so build the runtime shape — and
+      // round-trip the payload through JSON, because that is what the
+      // seed stores and what the server grades against.
       const item: Item = {
         id,
         kind: authored.kind,
@@ -155,7 +192,7 @@ for (const track of TRACKS) {
         prompt: authored.prompt,
         code: authored.code,
         lang: authored.lang,
-        payload: authored.payload,
+        payload: JSON.parse(JSON.stringify(authored.payload)),
         explanation: authored.explanation,
         interviewTip: authored.interviewTip,
         conceptIds: authored.conceptIds,
@@ -168,6 +205,7 @@ for (const track of TRACKS) {
         case "mcq":
         case "predict-output": {
           const choices = (authored.payload as McqPayload | PredictOutputPayload).choices;
+          checkUniqueIds(id, "choice", choices.map((c) => c.id));
           const rights = choices.filter((c) => c.correct);
           if (rights.length !== 1) fail(id, `${rights.length} correct choices, expected exactly 1`);
           if (choices.length < 3) warn(id, `only ${choices.length} choices`);
@@ -188,8 +226,12 @@ for (const track of TRACKS) {
 
         case "multi": {
           const choices = (authored.payload as MultiPayload).choices;
+          checkUniqueIds(id, "choice", choices.map((c) => c.id));
           const rights = choices.filter((c) => c.correct);
-          if (rights.length === 0) fail(id, "no correct choices");
+          if (rights.length === 0) {
+            fail(id, "no correct choices");
+            break;
+          }
           if (rights.length === choices.length) {
             fail(id, "every choice is correct — there is nothing to discriminate");
           }
@@ -219,6 +261,29 @@ for (const track of TRACKS) {
         case "fill-blank": {
           const payload = authored.payload as FillBlankPayload;
           if (payload.blanks.length === 0) fail(id, "no blanks");
+          checkUniqueIds(id, "blank", payload.blanks.map((b) => b.id));
+
+          // The renderer (Answers.tsx) only recognises {{\w+}} — anything
+          // looser would render as literal text with no input to fill.
+          for (const m of payload.template.matchAll(/\{\{([^}]*)\}\}/g)) {
+            if (!/^\w+$/.test(m[1])) fail(id, `placeholder {{${m[1]}}} is not renderable — use {{word}}`);
+          }
+          for (const b of payload.blanks) {
+            if (!/^\w+$/.test(b.id)) fail(id, `blank id "${b.id}" must be \\w+ to render`);
+          }
+
+          // Every blank must appear in the template, and nothing else may.
+          const placeholders = new Set(
+            [...payload.template.matchAll(/\{\{\s*([\w-]+)\s*\}\}/g)].map((m) => m[1])
+          );
+          for (const b of payload.blanks) {
+            if (!placeholders.has(b.id)) fail(id, `blank ${b.id} never appears in the template`);
+          }
+          for (const ph of placeholders) {
+            if (!payload.blanks.some((b) => b.id === ph)) {
+              fail(id, `template has {{${ph}}} but no blank with that id`);
+            }
+          }
 
           for (const blank of payload.blanks) {
             if (blank.accept.length === 0) fail(id, `blank ${blank.id} accepts nothing`);
@@ -234,7 +299,7 @@ for (const track of TRACKS) {
           }
 
           const wrong: Record<string, string> = {};
-          for (const b of payload.blanks) wrong[b.id] = " not-an-answer";
+          for (const b of payload.blanks) wrong[b.id] = "\u0000not-an-answer";
           if (grade(item, { kind: "fill-blank", values: wrong }).correct) {
             fail(id, "nonsense input grades as correct");
           }
@@ -244,6 +309,7 @@ for (const track of TRACKS) {
         case "order": {
           const steps = (authored.payload as OrderPayload).steps;
           if (steps.length < 3) fail(id, "fewer than 3 steps");
+          checkUniqueIds(id, "step", steps.map((st) => st.id));
           const ids = steps.map((s) => s.id);
           if (!grade(item, { kind: "order", order: ids }).correct) {
             fail(id, "the authored order does not grade as correct");
@@ -268,7 +334,8 @@ for (const track of TRACKS) {
             fail(id, `test data contains ${unserialisable}, which JSON cannot store — use a harness instead`);
           }
 
-          const verdict = grade(item, { kind: "code", code: payload.solutionCode });
+          // Grade exactly as the API does: the vm runner with a hard timeout.
+          const verdict = grade(item, { kind: "code", code: payload.solutionCode }, serverGradeOptions);
           if (!verdict.correct) {
             const failed = verdict.tests?.filter((t) => !t.passed) ?? [];
             fail(
@@ -280,7 +347,14 @@ for (const track of TRACKS) {
             );
           }
 
-          const starterVerdict = grade(item, { kind: "code", code: payload.starterCode });
+          const starterVerdict = grade(item, { kind: "code", code: payload.starterCode }, serverGradeOptions);
+
+          // And the browser runner must agree, or the learner sees one
+          // verdict on screen and a different one gets recorded.
+          const browserVerdict = grade(item, { kind: "code", code: payload.solutionCode });
+          if (browserVerdict.correct !== verdict.correct) {
+            fail(id, "the browser and server runners disagree on the reference solution");
+          }
           if (starterVerdict.correct) {
             fail(id, "the starter code already passes — there is nothing to solve");
           }

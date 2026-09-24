@@ -18,15 +18,30 @@ import type {
   ShortPayload,
   TrueFalsePayload,
 } from "@/types";
-import { runTests } from "./executor";
+import { extractFunctionName, runTests, type RunOptions, type RunResult } from "./executor";
 
-export function grade(item: Item, response: Response): Grade {
+export type GradeOptions = {
+  /**
+   * Replaces the code runner. The server passes the `node:vm` runner
+   * (executor.server.ts) so a runaway loop hits a hard timeout; the
+   * browser uses the default.
+   */
+  runTests?: (
+    code: string,
+    tests: CodePayload["tests"],
+    harness: string | undefined,
+    options: Omit<RunOptions, "compile">
+  ) => RunResult;
+};
+
+export function grade(item: Item, response: Response, options: GradeOptions = {}): Grade {
   switch (item.kind) {
     case "mcq":
     case "predict-output":
       return gradeSingle(
         (item.payload as McqPayload | PredictOutputPayload).choices,
-        response.kind === "mcq" || response.kind === "predict-output"
+        (response.kind === "mcq" || response.kind === "predict-output") &&
+          typeof response.choiceId === "string"
           ? response.choiceId
           : null
       );
@@ -34,36 +49,54 @@ export function grade(item: Item, response: Response): Grade {
     case "multi":
       return gradeMulti(
         (item.payload as MultiPayload).choices,
-        response.kind === "multi" ? response.choiceIds : []
+        response.kind === "multi" && Array.isArray(response.choiceIds)
+          ? response.choiceIds.filter((id): id is string => typeof id === "string")
+          : []
       );
 
     case "truefalse":
       return gradeTrueFalse(
         (item.payload as TrueFalsePayload).answer,
-        response.kind === "truefalse" ? response.value : null
+        response.kind === "truefalse" && typeof response.value === "boolean"
+          ? response.value
+          : null
       );
 
     case "fill-blank":
       return gradeBlanks(
         item.payload as FillBlankPayload,
-        response.kind === "fill-blank" ? response.values : {}
+        response.kind === "fill-blank" && isStringRecord(response.values)
+          ? response.values
+          : {}
       );
 
     case "order":
       return gradeOrder(
         item.payload as OrderPayload,
-        response.kind === "order" ? response.order : []
+        response.kind === "order" && Array.isArray(response.order)
+          ? response.order.filter((id): id is string => typeof id === "string")
+          : []
       );
 
     case "code":
       return gradeCode(
         item.payload as CodePayload,
-        response.kind === "code" ? response.code : ""
+        response.kind === "code" && typeof response.code === "string" ? response.code : "",
+        options
       );
 
     case "short":
       return gradeSelf(response.kind === "short" ? response.selfRating : null);
   }
+}
+
+function isStringRecord(v: unknown): v is Record<string, string> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    Object.values(v).every((x) => typeof x === "string")
+  );
 }
 
 // ─── Single choice ───
@@ -90,10 +123,11 @@ function gradeMulti(choices: Choice[], chosen: string[]): Grade {
   const hits = rights.filter((c) => picked.has(c.id)).length;
   const falsePositives = choices.filter((c) => !c.correct && picked.has(c.id)).length;
 
-  // Each wrong pick cancels one right pick; never negative.
+  // Each wrong pick cancels one right pick; never negative. So
+  // "select everything" scores 0 rather than harvesting every hit.
   const net = Math.max(0, hits - falsePositives);
-  const score = rights.length === 0 ? 0 : net / rights.length;
   const correct = hits === rights.length && falsePositives === 0;
+  const score = correct ? 1 : rights.length === 0 ? 0 : net / rights.length;
 
   return { correct, score, choices: verdicts };
 }
@@ -105,15 +139,25 @@ function gradeTrueFalse(answer: boolean, value: boolean | null): Grade {
 }
 
 // ─── Fill in the blanks ───
+/**
+ * Canonical form for comparing a typed blank with an accepted answer.
+ *
+ * - case-insensitive, whitespace collapsed (as documented on `Blank`)
+ * - every quote style is one quote, including the curly quotes phones
+ *   and macOS substitute automatically: `"user"` = `'user'` = `“user”`
+ * - whitespace next to punctuation is dropped, so `(x) => x` = `(x)=>x`
+ *   and `a, b` = `a,b`; whitespace *between words* is kept, so
+ *   `new Foo` never matches `newFoo`
+ * - trailing semicolons are noise in a snippet answer
+ */
 export function normalizeBlank(s: string): string {
-  return s
-    .trim()
+  return String(s ?? "")
     .toLowerCase()
+    .replace(/[`'"\u2018\u2019\u201A\u201B\u201C\u201D\u201E\u201F\u2032\u2033]/g, '"')
     .replace(/\s+/g, " ")
-    // Treat quote styles as equivalent so `"user"` matches `'user'`.
-    .replace(/[`'"]/g, '"')
-    // Trailing semicolons are noise in a snippet answer.
-    .replace(/;$/, "");
+    .trim()
+    .replace(/[\s;]+$/, "")
+    .replace(/ ?([^\w\s$]) ?/g, "$1");
 }
 
 function gradeBlanks(payload: FillBlankPayload, values: Record<string, string>): Grade {
@@ -152,8 +196,10 @@ function gradeOrder(payload: OrderPayload, given: string[]): Grade {
 }
 
 // ─── Code ───
-function gradeCode(payload: CodePayload, code: string): Grade {
-  const result = runTests(code, payload.tests, payload.harness);
+function gradeCode(payload: CodePayload, code: string, options: GradeOptions): Grade {
+  const run = options.runTests ?? runTests;
+  const expectedName = extractFunctionName(payload.starterCode ?? "") ?? undefined;
+  const result = run(code, payload.tests, payload.harness, { expectedName });
   const passed = result.results.filter((r) => r.passed).length;
   return {
     correct: result.allPassed,
@@ -166,7 +212,11 @@ function gradeCode(payload: CodePayload, code: string): Grade {
 // ─── Self-graded explain-it ───
 function gradeSelf(rating: number | null): Grade {
   // 1 Blanked · 2 Shaky · 3 Solid · 4 Nailed it
-  const r = rating ?? 1;
+  // Anything outside 1–4 (a tampered request) is treated as "Blanked".
+  const r =
+    typeof rating === "number" && Number.isInteger(rating) && rating >= 1 && rating <= 4
+      ? rating
+      : 1;
   return {
     correct: r >= 3,
     score: (r - 1) / 3,

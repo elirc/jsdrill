@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Badge, Card, Inline, Spinner } from "@/components/ui";
+import { useMemo, useState } from "react";
+import { useApi } from "@/components/useApi";
+import { Badge, Card, ErrorState, Inline, Spinner } from "@/components/ui";
 import { LEVEL_META, type ModuleProgress, type Track } from "@/types";
 import { masteryLabel, tint } from "@/lib/utils";
 
@@ -14,16 +15,9 @@ type Section = { track: Track; modules: ModuleProgress[] };
  * strong so the eye lands on what still needs work.
  */
 export default function CheatSheetPage() {
-  const [sections, setSections] = useState<Section[] | null>(null);
+  const { data: sections, error, retry } = useApi<Section[]>("/api/cheatsheet");
   const [trackFilter, setTrackFilter] = useState<string>("all");
   const [onlyShaky, setOnlyShaky] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/cheatsheet")
-      .then((r) => r.json())
-      .then((json) => json.success && setSections(json.data))
-      .catch(console.error);
-  }, []);
 
   const visible = useMemo(() => {
     if (!sections) return [];
@@ -36,6 +30,9 @@ export default function CheatSheetPage() {
       .filter((s) => s.modules.length > 0);
   }, [sections, trackFilter, onlyShaky]);
 
+  if (error) {
+    return <ErrorState as="h1" title="Couldn’t assemble the cheat sheet" message={error.message} onRetry={retry} />;
+  }
   if (!sections) return <Spinner label="Assembling the sheet…" />;
 
   const ideaCount = visible.reduce(
@@ -57,7 +54,13 @@ export default function CheatSheetPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex flex-wrap gap-1 p-1 rounded-lg" style={{ background: "var(--bg-inset)" }}>
+          {/* One scrollable row on phones; wraps from sm up. */}
+          <div
+            role="group"
+            aria-label="Filter by track"
+            className="flex gap-1 p-1 rounded-lg w-full min-w-0 overflow-x-auto sm:w-auto sm:flex-wrap"
+            style={{ background: "var(--bg-inset)" }}
+          >
             <FilterChip active={trackFilter === "all"} onClick={() => setTrackFilter("all")}>
               All tracks
             </FilterChip>
@@ -92,7 +95,7 @@ export default function CheatSheetPage() {
       {visible.length === 0 && (
         <Card padding="lg" className="text-center">
           <p className="text-[15px]" style={{ color: "var(--text-muted)" }}>
-            Everything here is solid. Nice.
+            {onlyShaky ? "Everything here is solid. Nice." : "No key ideas to show yet."}
           </p>
         </Card>
       )}
@@ -116,13 +119,15 @@ export default function CheatSheetPage() {
               <div className="flex items-start justify-between gap-4 mb-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Link
-                      href={`/app/path/${track.slug}/${mod.moduleSlug}`}
-                      className="text-[16px] font-semibold hover:underline"
-                      style={{ color: "var(--text)" }}
-                    >
-                      {mod.title}
-                    </Link>
+                    <h3 className="text-[16px] font-semibold">
+                      <Link
+                        href={`/app/path/${track.slug}/${mod.moduleSlug}`}
+                        className="hover:underline"
+                        style={{ color: "var(--text)" }}
+                      >
+                        {mod.title}
+                      </Link>
+                    </h3>
                     <Badge>{LEVEL_META[mod.level].short}</Badge>
                   </div>
                 </div>
@@ -153,7 +158,7 @@ export default function CheatSheetPage() {
                     className="flex gap-3 text-[15px] leading-[1.65]"
                     style={{ color: "var(--text)" }}
                   >
-                    <span className="flex-none mt-[3px]" style={{ color: track.color }}>
+                    <span aria-hidden className="flex-none mt-[3px]" style={{ color: track.color }}>
                       ▪
                     </span>
                     <span className="prose-inline">
@@ -163,11 +168,15 @@ export default function CheatSheetPage() {
                 ))}
               </ul>
 
-              <div className="mt-4 pt-3 border-t flex items-center gap-4 text-[12.5px]" style={{ borderColor: "var(--border)" }}>
+              <div
+                className="mt-4 pt-3 border-t flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px]"
+                style={{ borderColor: "var(--border)" }}
+              >
                 <Link
                   href={`/app/drill?mode=module&moduleId=${mod.moduleId}&size=${Math.min(mod.totalItems, 12)}`}
                   className="font-medium hover:underline"
                   style={{ color: "var(--accent)" }}
+                  aria-label={`Drill ${mod.title}`}
                 >
                   Drill this module →
                 </Link>
@@ -175,6 +184,7 @@ export default function CheatSheetPage() {
                   href={`/app/path/${track.slug}/${mod.moduleSlug}`}
                   className="hover:underline"
                   style={{ color: "var(--text-faint)" }}
+                  aria-label={`Read the full brief for ${mod.title}`}
                 >
                   Read the full brief
                 </Link>
@@ -202,7 +212,8 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
-      className="px-2.5 py-1.5 rounded-md text-[12.5px] font-medium transition-all whitespace-nowrap"
+      aria-pressed={active}
+      className="px-2.5 py-1.5 rounded-md text-[12.5px] font-medium transition-all whitespace-nowrap flex-none"
       style={{
         background: active ? "var(--surface)" : "transparent",
         color: active ? (color ?? "var(--text)") : "var(--text-faint)",

@@ -1,15 +1,25 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { DrillCard } from "@/components/drill/DrillCard";
-import { Badge, Button, Card, ProgressBar, Spinner, Stat } from "@/components/ui";
-import { emptyResponse, grade as gradeLocally, isAnswered } from "@/lib/grader";
+import { ActionBar, KeyHint } from "@/components/drill/SessionChrome";
+import { useDrillSession, type HistoryEntry } from "@/components/drill/useDrillSession";
+import { useApi } from "@/components/useApi";
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorState,
+  LinkButton,
+  ProgressBar,
+  Spinner,
+  Stat,
+} from "@/components/ui";
 import { formatDuration, formatTime } from "@/lib/utils";
-import type { DrillItem, Grade, InterviewScore, Response, SessionSummary } from "@/types";
+import type { InterviewScore } from "@/types";
 
 type Phase = "setup" | "running" | "scored";
-type Answered = { item: DrillItem; grade: Grade };
+type PastRun = { score: InterviewScore; createdAt: string };
 
 const LENGTHS = [
   { size: 10, label: "Screen", detail: "10 questions" },
@@ -17,164 +27,107 @@ const LENGTHS = [
   { size: 25, label: "Full loop", detail: "25 questions" },
 ];
 
+function scoreRun(answers: HistoryEntry[], seconds: number): InterviewScore {
+  const correct = answers.filter((a) => a.grade.correct).length;
+  const accuracy = answers.length ? Math.round((correct / answers.length) * 100) : 0;
+
+  const trackMap = new Map<string, { trackColor: string; correct: number; total: number }>();
+  for (const answer of answers) {
+    const entry = trackMap.get(answer.item.trackName) ?? {
+      trackColor: answer.item.trackColor,
+      correct: 0,
+      total: 0,
+    };
+    entry.total++;
+    if (answer.grade.correct) entry.correct++;
+    trackMap.set(answer.item.trackName, entry);
+  }
+
+  const byTrack = [...trackMap.entries()]
+    .map(([trackName, entry]) => ({ trackName, ...entry }))
+    .sort((a, b) => a.correct / a.total - b.correct / b.total);
+
+  const weakSpots = [
+    ...new Set(
+      answers.filter((a) => !a.grade.correct).flatMap((a) => a.item.concepts.map((c) => c.name))
+    ),
+  ].slice(0, 8);
+
+  const verdict =
+    accuracy >= 85
+      ? "Interview-ready. You'd handle a mid-level screen comfortably."
+      : accuracy >= 70
+        ? "Solid. Tighten the weak tracks below and you're there."
+        : accuracy >= 50
+          ? "Mixed. The fundamentals are landing; the applied questions need work."
+          : "Early days. Work through the roadmap level by level rather than drilling at random.";
+
+  return { total: answers.length, correct, accuracy, seconds, byTrack, verdict, weakSpots };
+}
+
 export default function InterviewPage() {
   const [phase, setPhase] = useState<Phase>("setup");
   const [size, setSize] = useState(15);
   const [timed, setTimed] = useState(true);
-  const [session, setSession] = useState<SessionSummary | null>(null);
-  const [index, setIndex] = useState(0);
-  const [response, setResponse] = useState<Response | null>(null);
-  const [grade, setGrade] = useState<Grade | null>(null);
-  const [answers, setAnswers] = useState<Answered[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [score, setScore] = useState<InterviewScore | null>(null);
-  const [history, setHistory] = useState<{ score: InterviewScore; createdAt: string }[]>([]);
+  const [saveFailed, setSaveFailed] = useState(false);
 
-  // Seeded when a run starts — reading the clock during render is impure.
-  const startedAt = useRef(0);
-  const questionStart = useRef(0);
+  // Past runs: loaded once, and again after a run is saved — not on
+  // every phase change.
+  const past = useApi<PastRun[]>("/api/interview");
+  const reloadPast = past.retry;
 
-  useEffect(() => {
-    fetch("/api/interview")
-      .then((r) => r.json())
-      .then((json) => json.success && setHistory(json.data))
-      .catch(() => {});
-  }, [phase]);
-
-  // Session clock.
-  useEffect(() => {
-    if (phase !== "running") return;
-    const id = setInterval(() => {
-      setElapsed(Math.round((Date.now() - startedAt.current) / 1000));
-    }, 1000);
-    return () => clearInterval(id);
-  }, [phase]);
-
-  async function start() {
-    setPhase("running");
-    setSession(null);
-    const res = await fetch(`/api/session?mode=interview&size=${size}`);
-    const json = await res.json();
-    if (json.success && json.data.items.length > 0) {
-      setSession(json.data);
-      setResponse(emptyResponse(json.data.items[0].kind));
-      setIndex(0);
-      setAnswers([]);
-      setGrade(null);
-      setElapsed(0);
-      startedAt.current = Date.now();
-      questionStart.current = Date.now();
-    } else {
-      setPhase("setup");
-    }
-  }
-
-  const finish = useCallback(
-    async (final: Answered[]) => {
-      const seconds = Math.round((Date.now() - startedAt.current) / 1000);
-      const correct = final.filter((a) => a.grade.correct).length;
-      const accuracy = final.length ? Math.round((correct / final.length) * 100) : 0;
-
-      const trackMap = new Map<string, { trackColor: string; correct: number; total: number }>();
-      for (const answer of final) {
-        const entry = trackMap.get(answer.item.trackName) ?? {
-          trackColor: answer.item.trackColor,
-          correct: 0,
-          total: 0,
-        };
-        entry.total++;
-        if (answer.grade.correct) entry.correct++;
-        trackMap.set(answer.item.trackName, entry);
-      }
-
-      const byTrack = [...trackMap.entries()]
-        .map(([trackName, entry]) => ({ trackName, ...entry }))
-        .sort((a, b) => a.correct / a.total - b.correct / b.total);
-
-      const weakSpots = [
-        ...new Set(
-          final
-            .filter((a) => !a.grade.correct)
-            .flatMap((a) => a.item.concepts.map((c) => c.name))
-        ),
-      ].slice(0, 8);
-
-      const verdict =
-        accuracy >= 85
-          ? "Interview-ready. You'd handle a mid-level screen comfortably."
-          : accuracy >= 70
-            ? "Solid. Tighten the weak tracks below and you're there."
-            : accuracy >= 50
-              ? "Mixed. The fundamentals are landing; the applied questions need work."
-              : "Early days. Work through the roadmap level by level rather than drilling at random.";
-
-      const result: InterviewScore = {
-        total: final.length,
-        correct,
-        accuracy,
-        seconds,
-        byTrack,
-        verdict,
-        weakSpots,
-      };
-
-      setScore(result);
-      setPhase("scored");
-
-      await fetch("/api/interview", {
+  const saveRun = useCallback(
+    (result: InterviewScore) => {
+      setSaveFailed(false);
+      fetch("/api/interview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(result),
-      }).catch(() => {});
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(String(res.status));
+          reloadPast();
+        })
+        .catch(() => setSaveFailed(true));
     },
-    []
+    [reloadPast]
   );
 
-  const item = session?.items[index];
+  const onComplete = useCallback(
+    (answers: HistoryEntry[], seconds: number) => {
+      const result = scoreRun(answers, seconds);
+      setScore(result);
+      setPhase("scored");
+      saveRun(result);
+    },
+    [saveRun]
+  );
 
-  const submit = useCallback(async () => {
-    if (!item || !response || grade) return;
-    if (!isAnswered(item, response)) return;
+  const drill = useDrillSession({
+    query: phase === "running" ? `mode=interview&size=${size}` : null,
+    mode: "interview",
+    allowRetry: false,
+    adoptServerGrade: false,
+    onComplete,
+  });
+  const { getElapsed, restart } = drill;
 
-    const seconds = Math.round((Date.now() - questionStart.current) / 1000);
-    const local = gradeLocally(item, response);
-    setGrade(local);
-    setAnswers((a) => [...a, { item, grade: local }]);
-
-    fetch("/api/attempts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itemId: item.id, response, timeSpent: seconds, mode: "interview" }),
-    }).catch(() => {});
-  }, [item, response, grade]);
-
-  const next = useCallback(() => {
-    if (!session) return;
-    const target = index + 1;
-    if (target >= session.items.length) {
-      finish(answers);
-      return;
-    }
-    setIndex(target);
-    setGrade(null);
-    setResponse(emptyResponse(session.items[target].kind));
-    questionStart.current = Date.now();
-  }, [index, session, answers, finish]);
-
+  // Session clock — only ticks when it's on screen.
+  const clockRunning = phase === "running" && timed && drill.status === "active";
   useEffect(() => {
-    if (phase !== "running") return;
-    function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
-      const typing = target && /^(INPUT|TEXTAREA)$/.test(target.tagName);
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey || !typing)) {
-        e.preventDefault();
-        if (grade) next();
-        else submit();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [phase, grade, next, submit]);
+    if (!clockRunning) return;
+    const id = setInterval(() => setElapsed(getElapsed()), 1000);
+    return () => clearInterval(id);
+  }, [clockRunning, getElapsed]);
+
+  function begin() {
+    setElapsed(0);
+    setScore(null);
+    restart(); // a fresh draw even when the length is unchanged
+    setPhase("running");
+  }
 
   // ─── Setup ───
 
@@ -193,14 +146,20 @@ export default function InterviewPage() {
 
           <div className="mt-6 flex flex-col gap-4">
             <div>
-              <div className="text-[12px] mb-2" style={{ color: "var(--text-faint)" }}>
+              <div className="text-[12px] mb-2" style={{ color: "var(--text-faint)" }} id="length-label">
                 Length
               </div>
-              <div className="flex gap-1.5 p-1 rounded-lg w-fit" style={{ background: "var(--bg-inset)" }}>
+              <div
+                role="group"
+                aria-labelledby="length-label"
+                className="grid grid-cols-3 sm:flex gap-1.5 p-1 rounded-lg sm:w-fit"
+                style={{ background: "var(--bg-inset)" }}
+              >
                 {LENGTHS.map((option) => (
                   <button
                     key={option.size}
                     type="button"
+                    aria-pressed={size === option.size}
                     onClick={() => setSize(option.size)}
                     className="px-3.5 py-2 rounded-md text-[12.5px] font-medium transition-all"
                     style={{
@@ -209,7 +168,7 @@ export default function InterviewPage() {
                     }}
                   >
                     {option.label}
-                    <span className="ml-1.5 text-[11px] opacity-60">{option.detail}</span>
+                    <span className="block sm:inline sm:ml-1.5 text-[11px] opacity-60">{option.detail}</span>
                   </button>
                 ))}
               </div>
@@ -220,7 +179,7 @@ export default function InterviewPage() {
                 type="checkbox"
                 checked={timed}
                 onChange={(e) => setTimed(e.target.checked)}
-                className="h-4 w-4 rounded accent-current"
+                className="h-4 w-4 rounded"
                 style={{ accentColor: "var(--accent)" }}
               />
               <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>
@@ -229,47 +188,12 @@ export default function InterviewPage() {
             </label>
           </div>
 
-          <Button size="lg" className="mt-6" onClick={start}>
+          <Button size="lg" className="mt-6" onClick={begin}>
             Begin interview →
           </Button>
         </Card>
 
-        {history.length > 0 && (
-          <Card>
-            <h2 className="text-[14px] font-semibold mb-3.5" style={{ color: "var(--text)" }}>
-              Previous runs
-            </h2>
-            <div className="flex flex-col gap-2">
-              {history.map((run, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 rounded-lg border px-3.5 py-2.5"
-                  style={{ background: "var(--bg-inset)", borderColor: "var(--border)" }}
-                >
-                  <span
-                    className="text-[15px] font-semibold tabular-nums flex-none w-12"
-                    style={{
-                      color:
-                        run.score.accuracy >= 75
-                          ? "var(--good)"
-                          : run.score.accuracy >= 50
-                            ? "var(--warn)"
-                            : "var(--bad)",
-                    }}
-                  >
-                    {run.score.accuracy}%
-                  </span>
-                  <span className="text-[12.5px] flex-1" style={{ color: "var(--text-muted)" }}>
-                    {run.score.correct}/{run.score.total} · {formatDuration(run.score.seconds)}
-                  </span>
-                  <span className="text-[11.5px]" style={{ color: "var(--text-faint)" }}>
-                    {new Date(run.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Card>
-        )}
+        <PastRuns past={past} />
       </div>
     );
   }
@@ -277,89 +201,187 @@ export default function InterviewPage() {
   // ─── Scored ───
 
   if (phase === "scored" && score) {
-    return <Scorecard score={score} onRestart={() => setPhase("setup")} />;
+    return (
+      <Scorecard
+        score={score}
+        onRestart={() => setPhase("setup")}
+        onRetrySave={saveFailed ? () => saveRun(score) : undefined}
+      />
+    );
   }
 
   // ─── Running ───
 
-  if (!session || !item || !response) return <Spinner label="Assembling your interview…" />;
+  if (drill.status === "error" || drill.status === "empty") {
+    return (
+      <ErrorState
+        as="h1"
+        title={drill.status === "empty" ? "No questions to ask yet" : "Couldn’t assemble your interview"}
+        message={
+          drill.status === "empty"
+            ? "The question bank looks empty. Seed it with `npm run db:seed`."
+            : (drill.error ?? undefined)
+        }
+        onRetry={drill.status === "error" ? restart : undefined}
+        extra={
+          <Button variant="secondary" onClick={() => setPhase("setup")}>
+            Back to setup
+          </Button>
+        }
+      />
+    );
+  }
 
-  const canSubmit =
-    item.kind === "short"
-      ? response.kind === "short" && response.selfRating !== null
-      : isAnswered(item, response);
+  const { session, item, response } = drill;
+  if (drill.status !== "active" || !session || !item || !response) {
+    return <Spinner label="Assembling your interview…" />;
+  }
 
   return (
     <div className="flex flex-col gap-5">
+      <h1 className="sr-only">Mock interview</h1>
       <div>
         <div className="flex items-center justify-between mb-2 text-[12px]">
           <div className="flex items-center gap-2">
             <Badge tone="accent">Interview</Badge>
             <span style={{ color: "var(--text-muted)" }}>
-              Question {index + 1} of {session.items.length}
+              Question {drill.index + 1} of {drill.total}
             </span>
           </div>
           {timed && (
-            <span className="tabular-nums font-mono" style={{ color: "var(--text-muted)" }}>
+            <span
+              className="tabular-nums font-mono"
+              style={{ color: "var(--text-muted)" }}
+              aria-label={`Elapsed ${formatTime(elapsed)}`}
+            >
               {formatTime(elapsed)}
             </span>
           )}
         </div>
-        <ProgressBar value={((index + (grade ? 1 : 0)) / session.items.length) * 100} height={4} />
+        <ProgressBar
+          value={((drill.index + (drill.revealed ? 1 : 0)) / drill.total) * 100}
+          height={4}
+          label="Interview progress"
+        />
       </div>
 
       <DrillCard
         key={item.id}
         item={item}
         response={response}
-        onChange={setResponse}
-        grade={grade}
-        onSubmit={submit}
-        revealed={grade !== null}
+        onChange={drill.setResponse}
+        grade={drill.grade}
+        revealed={drill.revealed}
         showPrimer={false}
-        bookmarked={false}
-        onBookmark={() => {}}
       />
 
-      <div
-        className="sticky bottom-0 -mx-4 px-4 py-3 border-t backdrop-blur-xl flex items-center justify-end gap-3"
-        style={{
-          borderColor: "var(--border)",
-          background: "color-mix(in srgb, var(--bg) 88%, transparent)",
-        }}
-      >
-        {!grade ? (
-          <Button onClick={submit} disabled={!canSubmit}>
+      <ActionBar className="justify-end">
+        <KeyHint item={item} revealed={drill.revealed} verb="answer" />
+        {!drill.revealed ? (
+          <Button onClick={drill.submit} disabled={!drill.canSubmit}>
             {item.kind === "short" ? "Log & continue" : "Answer"}
           </Button>
         ) : (
-          <Button onClick={next} variant={index === session.items.length - 1 ? "success" : "primary"}>
-            {index === session.items.length - 1 ? "See scorecard" : "Next"} →
+          <Button onClick={drill.next} variant={drill.isLast ? "success" : "primary"}>
+            {drill.isLast ? "See scorecard" : "Next"} →
           </Button>
         )}
-      </div>
+      </ActionBar>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────
 
-function Scorecard({ score, onRestart }: { score: InterviewScore; onRestart: () => void }) {
-  const color =
-    score.accuracy >= 75 ? "var(--good)" : score.accuracy >= 50 ? "var(--warn)" : "var(--bad)";
+const dateFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+function PastRuns({ past }: { past: ReturnType<typeof useApi<PastRun[]>> }) {
+  if (past.error) {
+    return (
+      <Card role="alert">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-[13px] flex-1" style={{ color: "var(--text-muted)" }}>
+            Couldn&apos;t load your previous runs.
+          </p>
+          <Button size="sm" variant="secondary" onClick={past.retry}>
+            Try again
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  const runs = past.data ?? [];
+  if (runs.length === 0) return null;
+
+  return (
+    <Card>
+      <h2 className="text-[14px] font-semibold mb-3.5" style={{ color: "var(--text)" }}>
+        Previous runs
+      </h2>
+      <ul className="flex flex-col gap-2">
+        {runs.map((run, i) => (
+          <li
+            key={`${run.createdAt}-${i}`}
+            className="flex items-center gap-3 rounded-lg border px-3.5 py-2.5"
+            style={{ background: "var(--bg-inset)", borderColor: "var(--border)" }}
+          >
+            <span
+              className="text-[15px] font-semibold tabular-nums flex-none w-12"
+              style={{ color: accuracyColor(run.score.accuracy) }}
+            >
+              {run.score.accuracy}%
+            </span>
+            <span className="text-[12.5px] flex-1" style={{ color: "var(--text-muted)" }}>
+              {run.score.correct}/{run.score.total} · {formatDuration(run.score.seconds)}
+            </span>
+            <time
+              dateTime={run.createdAt}
+              className="text-[11.5px]"
+              style={{ color: "var(--text-faint)" }}
+            >
+              {dateFormat.format(new Date(run.createdAt))}
+            </time>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function accuracyColor(accuracy: number) {
+  return accuracy >= 75 ? "var(--good)" : accuracy >= 50 ? "var(--warn)" : "var(--bad)";
+}
+
+function Scorecard({
+  score,
+  onRestart,
+  onRetrySave,
+}: {
+  score: InterviewScore;
+  onRestart: () => void;
+  /** Set when saving the run to history failed. */
+  onRetrySave?: () => void;
+}) {
+  const color = accuracyColor(score.accuracy);
+  const pace = Math.round(score.seconds / Math.max(1, score.total));
 
   return (
     <div className="flex flex-col gap-5 animate-rise">
       <Card raised padding="lg" className="text-center">
-        <div className="text-[11px] uppercase tracking-wider" style={{ color: "var(--text-faint)" }}>
+        <h1 className="text-[11px] uppercase tracking-wider font-normal" style={{ color: "var(--text-faint)" }}>
           Scorecard
-        </div>
+        </h1>
         <div className="text-5xl font-semibold mt-2 tabular-nums" style={{ color }}>
           {score.accuracy}%
         </div>
         <div className="text-[14px] mt-1.5" style={{ color: "var(--text-muted)" }}>
-          {score.correct} of {score.total} correct · {formatDuration(score.seconds)} ·{" "}
-          {Math.round(score.seconds / Math.max(1, score.total))}s per question
+          {score.correct} of {score.total} correct · {formatDuration(score.seconds)} · {pace}s per
+          question
         </div>
         <p
           className="text-[14px] mt-5 max-w-lg mx-auto leading-relaxed"
@@ -368,11 +390,20 @@ function Scorecard({ score, onRestart }: { score: InterviewScore; onRestart: () 
           {score.verdict}
         </p>
 
-        <div className="flex items-center justify-center gap-3 mt-6">
+        {onRetrySave && (
+          <p role="alert" className="text-[13px] mt-4" style={{ color: "var(--warn)" }}>
+            This run couldn&apos;t be saved to your history.{" "}
+            <button type="button" onClick={onRetrySave} className="underline">
+              Try again
+            </button>
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
           <Button onClick={onRestart}>Run another</Button>
-          <Link href="/app/dashboard">
-            <Button variant="secondary">See full progress</Button>
-          </Link>
+          <LinkButton href="/app/dashboard" variant="secondary">
+            See full progress
+          </LinkButton>
         </div>
       </Card>
 
@@ -418,7 +449,7 @@ function Scorecard({ score, onRestart }: { score: InterviewScore; onRestart: () 
           </p>
           {score.weakSpots.length === 0 ? (
             <p className="text-[13px]" style={{ color: "var(--good)" }}>
-              Nothing missed — a clean run.
+              <span aria-hidden>✓ </span>Nothing missed — a clean run.
             </p>
           ) : (
             <div className="flex flex-wrap gap-1.5">
@@ -430,18 +461,21 @@ function Scorecard({ score, onRestart }: { score: InterviewScore; onRestart: () 
             </div>
           )}
 
-          <Link href="/app/drill?mode=weak&size=12" className="block mt-5">
-            <Button size="sm" variant="secondary" className="w-full">
-              Drill these weak spots
-            </Button>
-          </Link>
+          <LinkButton
+            href="/app/drill?mode=weak&size=12"
+            size="sm"
+            variant="secondary"
+            className="w-full mt-5"
+          >
+            Drill these weak spots
+          </LinkButton>
         </Card>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         <Stat label="Questions" value={score.total} />
         <Stat label="Correct" value={score.correct} color="var(--good)" />
-        <Stat label="Pace" value={`${Math.round(score.seconds / Math.max(1, score.total))}s`} sub="per question" />
+        <Stat label="Pace" value={`${pace}s`} sub="per question" />
       </div>
     </div>
   );

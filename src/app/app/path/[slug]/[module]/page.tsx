@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { use, useEffect, useState } from "react";
+import { use } from "react";
+import { useApi } from "@/components/useApi";
 import {
   Badge,
-  Button,
+  type BadgeTone,
   Card,
   EmptyState,
+  ErrorState,
   Inline,
+  LinkButton,
   Markdown,
   ProgressBar,
   Spinner,
@@ -51,7 +54,7 @@ type ModuleDetail = {
 
 const STATUS_META: Record<
   ModuleItem["status"],
-  { label: string; tone: "neutral" | "accent" | "good" | "warn" }
+  { label: string; tone: BadgeTone }
 > = {
   unseen: { label: "New", tone: "neutral" },
   learning: { label: "Learning", tone: "accent" },
@@ -69,29 +72,36 @@ export default function ModulePage({
   params: Promise<{ slug: string; module: string }>;
 }) {
   const { slug, module: moduleSlug } = use(params);
-  const [data, setData] = useState<ModuleDetail | null>(null);
-  const [notFound, setNotFound] = useState(false);
+  const { data, error, retry } = useApi<ModuleDetail>(
+    `/api/path?module=${encodeURIComponent(moduleSlug)}`
+  );
 
-  useEffect(() => {
-    fetch(`/api/path?module=${moduleSlug}`)
-      .then((r) => r.json())
-      .then((json) => (json.success ? setData(json.data) : setNotFound(true)))
-      .catch(() => setNotFound(true));
-  }, [moduleSlug]);
-
-  if (notFound) {
+  if (error?.status === 404) {
     return (
       <Card padding="lg">
         <EmptyState
+          as="h1"
           title="Module not found"
           body="That module doesn't exist, or it has moved."
-          action={
-            <Link href={`/app/path/${slug}`}>
-              <Button>Back to the track</Button>
-            </Link>
-          }
+          action={<LinkButton href={`/app/path/${slug}`}>Back to the track</LinkButton>}
         />
       </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <ErrorState
+        as="h1"
+        title="Couldn’t load this module"
+        message={error.message}
+        onRetry={retry}
+        extra={
+          <LinkButton href={`/app/path/${slug}`} variant="secondary">
+            Back to the track
+          </LinkButton>
+        }
+      />
     );
   }
 
@@ -122,7 +132,9 @@ export default function ModulePage({
           {track.name}
         </Link>
         <span aria-hidden>›</span>
-        <span style={{ color: "var(--text-muted)" }}>{mod.title}</span>
+        <span style={{ color: "var(--text-muted)" }} aria-current="page">
+          {mod.title}
+        </span>
       </nav>
 
       {/* ─── Header ─── */}
@@ -155,9 +167,9 @@ export default function ModulePage({
             </p>
           </div>
 
-          <Link href={drillHref} className="flex-none">
-            <Button size="lg">{drillLabel}</Button>
-          </Link>
+          <LinkButton href={drillHref} size="lg" className="flex-none w-full sm:w-auto">
+            {drillLabel}
+          </LinkButton>
         </div>
       </Card>
 
@@ -221,22 +233,22 @@ export default function ModulePage({
               return (
                 <li
                   key={item.id}
-                  className="flex items-start gap-4 py-3.5"
+                  className="flex items-start gap-3 sm:gap-4 py-3.5"
                   style={{
                     borderTop: i === 0 ? undefined : "1px solid var(--border)",
                   }}
                 >
+                  {/* Icon-only on phones so the prompt keeps its width. */}
                   <span
-                    className="flex-none inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] font-medium"
+                    className="flex-none inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] font-medium sm:min-w-[132px]"
                     style={{
                       background: "var(--bg-inset)",
                       color: "var(--text-muted)",
-                      minWidth: 132,
                     }}
                     title={kind.blurb}
                   >
                     <span aria-hidden>{kind.icon}</span>
-                    {kind.label}
+                    <span className="sr-only sm:not-sr-only">{kind.label}</span>
                   </span>
 
                   <p
@@ -253,8 +265,10 @@ export default function ModulePage({
                   </p>
 
                   <span
-                    className="flex-none flex items-center gap-1 mt-1.5"
+                    className="flex-none hidden sm:flex items-center gap-1 mt-1.5"
                     title={`Difficulty ${item.difficulty} of 3`}
+                    role="img"
+                    aria-label={`Difficulty ${item.difficulty} of 3`}
                   >
                     {[1, 2, 3].map((dot) => (
                       <span
@@ -288,9 +302,9 @@ export default function ModulePage({
 
       {/* ─── Prev / next ─── */}
       {(prev || next) && (
-        <div className="grid grid-cols-2 gap-3">
+        <nav className="grid grid-cols-2 gap-3" aria-label="Other modules in this track">
           {prev ? (
-            <Link href={`/app/path/${slug}/${prev.moduleSlug}`}>
+            <Link href={`/app/path/${slug}/${prev.moduleSlug}`} className="block rounded-xl">
               <Card
                 className="h-full transition-all duration-150 hover:-translate-y-0.5"
                 style={{ cursor: "pointer" }}
@@ -308,7 +322,7 @@ export default function ModulePage({
           )}
 
           {next && (
-            <Link href={`/app/path/${slug}/${next.moduleSlug}`} className="col-start-2">
+            <Link href={`/app/path/${slug}/${next.moduleSlug}`} className="col-start-2 block rounded-xl">
               <Card
                 className="h-full text-right transition-all duration-150 hover:-translate-y-0.5"
                 style={{ cursor: "pointer" }}
@@ -322,13 +336,13 @@ export default function ModulePage({
               </Card>
             </Link>
           )}
-        </div>
+        </nav>
       )}
 
       <div className="flex justify-center pb-2">
-        <Link href={drillHref}>
-          <Button size="lg">{drillLabel}</Button>
-        </Link>
+        <LinkButton href={drillHref} size="lg">
+          {drillLabel}
+        </LinkButton>
       </div>
     </div>
   );

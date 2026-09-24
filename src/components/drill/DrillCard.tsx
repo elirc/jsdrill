@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useRef } from "react";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Badge, Card, Inline, Markdown } from "@/components/ui";
 import { AnswerFor } from "./Answers";
@@ -12,32 +13,48 @@ function moduleHref(item: DrillItem) {
   return `/app/path/${item.trackSlug}/${item.moduleSlug}`;
 }
 
+/**
+ * One question: optional primer, header, prompt, answer UI and feedback.
+ * Render it with `key={item.id}` so per-item UI state (a peeked model
+ * answer, a shown solution, the editor) resets between questions.
+ */
 export function DrillCard({
   item,
   response,
   onChange,
   grade,
-  onSubmit,
   revealed,
   showPrimer,
-  bookmarked,
+  bookmarked = false,
   onBookmark,
 }: {
   item: DrillItem;
   response: Response;
   onChange: (r: Response) => void;
   grade: Grade | null;
-  onSubmit: () => void;
   revealed: boolean;
   showPrimer: boolean;
-  bookmarked: boolean;
-  onBookmark: () => void;
+  bookmarked?: boolean;
+  /** Omit to hide the bookmark control (the interview has none). */
+  onBookmark?: () => void;
 }) {
   const kind = ITEM_KIND_META[item.kind];
   const primer =
     showPrimer && item.moduleKeyIdeas && item.moduleKeyIdeas.length > 0
       ? item.moduleKeyIdeas
       : null;
+  const promptRef = useRef<HTMLHeadingElement>(null);
+
+  // A new question mounts (keyed by id): bring it into view and move focus
+  // to its prompt so screen readers announce it and the keyboard flow
+  // (1–4, Enter) keeps working without a stray focused control.
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+    promptRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const retrying = grade !== null && !revealed;
+  const announcement = revealed && grade ? verdictFor(grade).headline : retrying ? "Not quite — one more try." : "";
 
   return (
     <div className="flex flex-col gap-4">
@@ -51,9 +68,9 @@ export function DrillCard({
             New topic
           </div>
 
-          <h3 className="text-[16px] font-semibold mt-1.5" style={{ color: "var(--text)" }}>
+          <h2 className="text-[16px] font-semibold mt-1.5" style={{ color: "var(--text)" }}>
             {item.moduleTitle}
-          </h3>
+          </h2>
 
           <p className="text-[14px] leading-relaxed mt-1" style={{ color: "var(--text-muted)" }}>
             {item.moduleSummary}
@@ -63,6 +80,7 @@ export function DrillCard({
             {primer.map((idea) => (
               <li key={idea} className="flex gap-2.5">
                 <span
+                  aria-hidden
                   className="mt-[7px] h-[5px] w-[5px] rounded-full flex-none"
                   style={{ background: item.trackColor }}
                 />
@@ -94,13 +112,14 @@ export function DrillCard({
         >
           <Badge color={item.trackColor}>{item.trackName}</Badge>
           <Badge>{levelShort(item.level)}</Badge>
-          <span className="text-[12px] truncate" style={{ color: "var(--text-faint)" }}>
+          <span className="text-[12px] truncate min-w-0" style={{ color: "var(--text-faint)" }}>
             {item.moduleTitle}
           </span>
           <Link
             href={moduleHref(item)}
             className="text-[12px] hover:underline whitespace-nowrap"
             style={{ color: "var(--text-faint)" }}
+            aria-label={`Brief for ${item.moduleTitle}`}
           >
             Brief ↗
           </Link>
@@ -108,25 +127,30 @@ export function DrillCard({
           <div className="ml-auto flex items-center gap-2">
             {item.isReview && <Badge tone="warn">↻ Review</Badge>}
             <Badge>
-              {kind.icon} {kind.label}
+              <span aria-hidden>{kind.icon}</span> {kind.label}
             </Badge>
-            <button
-              type="button"
-              onClick={onBookmark}
-              aria-label={bookmarked ? "Remove bookmark" : "Bookmark for later"}
-              title={bookmarked ? "Bookmarked" : "Save for later"}
-              className="text-[15px] leading-none px-1 transition-transform hover:scale-110"
-              style={{ color: bookmarked ? "var(--warn)" : "var(--text-faint)" }}
-            >
-              {bookmarked ? "★" : "☆"}
-            </button>
+            {onBookmark && (
+              <button
+                type="button"
+                onClick={onBookmark}
+                aria-pressed={bookmarked}
+                aria-label="Bookmark this question"
+                title={bookmarked ? "Bookmarked" : "Save for later"}
+                className="text-[15px] leading-none h-8 w-8 -my-1.5 -mr-1.5 rounded-md flex items-center justify-center transition-transform hover:scale-110"
+                style={{ color: bookmarked ? "var(--warn)" : "var(--text-faint)" }}
+              >
+                <span aria-hidden>{bookmarked ? "★" : "☆"}</span>
+              </button>
+            )}
           </div>
         </div>
 
         {/* ─── Prompt ─── */}
         <div className="px-5 py-4">
           <h2
-            className="text-[18px] font-medium leading-[1.55] prose-inline"
+            ref={promptRef}
+            tabIndex={-1}
+            className="text-[18px] font-medium leading-[1.55] prose-inline outline-none"
             style={{ color: "var(--text)" }}
           >
             <Inline>{item.prompt}</Inline>
@@ -147,10 +171,15 @@ export function DrillCard({
           response={response}
           onChange={onChange}
           grade={grade}
-          onSubmit={onSubmit}
           revealed={revealed}
         />
       </div>
+
+      {/* Verdicts are announced from a region that is always mounted;
+          a live region that mounts with its content is often missed. */}
+      <p className="sr-only" aria-live="polite">
+        {announcement}
+      </p>
 
       {/* ─── Feedback ─── */}
       {grade && revealed && <Feedback item={item} grade={grade} />}
@@ -158,36 +187,29 @@ export function DrillCard({
   );
 }
 
-function Feedback({ item, grade }: { item: DrillItem; grade: Grade }) {
+type Tone = "good" | "warn" | "bad" | "neutral";
+
+function verdictFor(grade: Grade): { tone: Tone; headline: string } {
   const secondTry = grade.correct && grade.attempt === 2;
+  if (grade.selfGraded) return { tone: "neutral", headline: "Logged" };
+  if (secondTry) return { tone: "warn", headline: "Got there on the second try" };
+  if (grade.correct) return { tone: "good", headline: "Correct" };
+  if (grade.score > 0) {
+    return { tone: "warn", headline: `Partly right — ${Math.round(grade.score * 100)}%` };
+  }
+  return { tone: "bad", headline: "Not quite" };
+}
 
-  const tone = grade.selfGraded
-    ? "neutral"
-    : secondTry
-      ? "warn"
-      : grade.correct
-        ? "good"
-        : grade.score > 0
-          ? "warn"
-          : "bad";
+const TONE_COLOR: Record<Tone, string> = {
+  good: "var(--good)",
+  warn: "var(--warn)",
+  bad: "var(--bad)",
+  neutral: "var(--accent)",
+};
 
-  const headline = grade.selfGraded
-    ? "Logged"
-    : secondTry
-      ? "Got there on the second try"
-      : grade.correct
-        ? "Correct"
-        : grade.score > 0
-          ? `Partly right — ${Math.round(grade.score * 100)}%`
-          : "Not quite";
-
-  const colors: Record<string, string> = {
-    good: "var(--good)",
-    warn: "var(--warn)",
-    bad: "var(--bad)",
-    neutral: "var(--accent)",
-  };
-
+function Feedback({ item, grade }: { item: DrillItem; grade: Grade }) {
+  const { tone, headline } = verdictFor(grade);
+  const color = TONE_COLOR[tone];
   const hint = grade.errorType ? ERROR_HINTS[grade.errorType] : null;
 
   // The first paragraph is the takeaway; anything after it is supporting detail.
@@ -201,18 +223,19 @@ function Feedback({ item, grade }: { item: DrillItem; grade: Grade }) {
         className="flex items-center gap-2.5 px-5 py-3 border-b"
         style={{
           borderColor: "var(--border)",
-          background: `color-mix(in srgb, ${colors[tone]} 9%, transparent)`,
+          background: `color-mix(in srgb, ${color} 9%, transparent)`,
         }}
       >
         <span
+          aria-hidden
           className="h-5 w-5 rounded-full flex items-center justify-center text-[11px] font-bold flex-none"
-          style={{ background: colors[tone], color: "#0a0d14" }}
+          style={{ background: color, color: "#0a0d14" }}
         >
-          {grade.correct || grade.selfGraded ? "✓" : "!"}
+          {grade.correct || grade.selfGraded ? "✓" : grade.score > 0 ? "!" : "✕"}
         </span>
-        <span className="text-[14px] font-semibold" style={{ color: colors[tone] }}>
+        <h3 className="text-[14px] font-semibold" style={{ color }}>
           {headline}
-        </span>
+        </h3>
       </div>
 
       <div className="px-5 py-4 flex flex-col gap-4">
@@ -256,16 +279,16 @@ function Feedback({ item, grade }: { item: DrillItem; grade: Grade }) {
               Concepts:
             </span>
             {item.concepts.map((c) => (
-              <a key={c.id} href={`/app/concepts?c=${c.slug}`}>
+              <Link key={c.id} href={`/app/concepts?c=${c.slug}`} className="rounded-md">
                 <Badge className="hover:brightness-125 transition-all">{c.name}</Badge>
-              </a>
+              </Link>
             ))}
           </div>
         )}
 
         <Link
           href={moduleHref(item)}
-          className="text-[12.5px] hover:underline"
+          className="text-[12.5px] hover:underline w-fit"
           style={{ color: "var(--text-faint)" }}
         >
           Read the brief for {item.moduleTitle} →

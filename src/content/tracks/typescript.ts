@@ -106,6 +106,91 @@ if (typeof data === "object" && data !== null && "name" in data) { /* ... */ }
           c: ["static-types", "nullability"],
           d: 1,
         }),
+        mcq("ts-basics-void-never", {
+          q: "What is the difference between a function returning `void` and one returning `never`?",
+          why: "`void` means the function **returns, but with no useful value** — a logger, an event handler. `never` means the function **never returns normally at all**: it always throws, or it loops forever. `function fail(msg: string): never { throw new Error(msg); }` is the classic example.\n\nThat difference has consequences for narrowing: after a call to a `never`-returning function, TypeScript knows the code below is unreachable, so `if (!user) fail(\"missing\");` narrows `user` to non-null afterwards. `never` is also the empty type — the type of a value that cannot exist — which is exactly why exhaustiveness checks assign the leftover case to a `never` variable.\n\nFor completeness: `any` switches type checking off, and `unknown` accepts any value but forces you to narrow before use.",
+          tip: "Tie `never` to exhaustiveness checking — it shows you use it, not just know it.",
+          c: ["static-types", "narrowing"],
+          d: 2,
+          choices: [
+            {
+              t: "`void` returns without a useful value; `never` never returns normally because it always throws or loops",
+              ok: true,
+              why: "Correct — and `never` enables narrowing after the call.",
+            },
+            {
+              t: "They are synonyms; `never` is the older spelling",
+              why: "They are distinct types. A `void` function may return; a `never` function cannot.",
+            },
+            {
+              t: "`never` means the function returns `null` or `undefined`",
+              why: "That is closer to `void` or `undefined`. `never` has no values at all.",
+            },
+            {
+              t: "`void` functions cannot be called in expressions",
+              why: "They can; the result is simply typed `void`, so you cannot usefully read it.",
+            },
+          ],
+        }),
+        mcq("ts-basics-enum", {
+          q: "Why do many TypeScript teams prefer `type Status = \"active\" | \"banned\"` over `enum Status { Active = \"active\", Banned = \"banned\" }`?",
+          why: "Because a **union of literals is purely a type** and disappears at compile time, while an **enum is one of the few TypeScript features that emits runtime JavaScript** — an object with the members. Everything else follows from that.\n\nA string enum is also nominal-ish: a plain `\"active\"` string, such as one from a JSON response, is not assignable to `Status.Active`, so you end up casting at every boundary. A literal union accepts the string directly and still gets full autocomplete and exhaustiveness checking. Numeric enums have their own oddities, such as reverse mappings on the emitted object.\n\nThe runtime-emitting part has become a practical issue too: tools that simply strip types, including Node's built-in TypeScript support, cannot handle enums without an extra transform. If you want a runtime list of values, `const STATUSES = [\"active\", \"banned\"] as const` plus `type Status = typeof STATUSES[number]` gives you both.\n\nEnums are not *wrong* — plenty of codebases use them — but this is why many style guides avoid them.",
+          tip: "Show the `as const` array pattern — it answers 'but I need the values at runtime'.",
+          c: ["static-types", "tooling"],
+          d: 2,
+          choices: [
+            {
+              t: "A literal union is erased at compile time and accepts plain strings; an enum emits runtime code and rejects raw string literals",
+              ok: true,
+              why: "Correct — the runtime footprint and the assignability friction are the two main reasons.",
+            },
+            {
+              t: "Enums do not support autocomplete in editors",
+              why: "They autocomplete fine; so do literal unions.",
+            },
+            {
+              t: "Literal unions are checked at runtime, enums only at compile time",
+              why: "Backwards — neither is validated at runtime, but only the enum exists at runtime at all.",
+            },
+            {
+              t: "Enums cannot be used in `switch` statements",
+              why: "They can, including exhaustiveness checks.",
+            },
+          ],
+        }),
+        tf("ts-basics-merging", {
+          q: "Two `interface User` declarations in the same scope are a compile error, just like two `type User` aliases.",
+          answer: false,
+          why: "False. Interfaces support **declaration merging**: two `interface User` declarations in the same scope combine into one interface with the members of both (conflicting property types are an error). Two `type User` aliases, by contrast, are a duplicate-identifier error.\n\nMerging is mostly used to **augment types you do not own**. Adding a property to `Window`, extending Express's `Request` with a `user` field, or adding fields to a library's theme type are all done by redeclaring the interface, inside `declare global { ... }` or `declare module \"express\" { ... }` when you are in a module file.\n\nThe flip side is that merging can happen by accident — in a global script (a file with no imports or exports), an interface named the same as a built-in one such as `Event` silently extends it — which is one reason some teams default to `type` for their own shapes.",
+          c: ["static-types", "structural-typing"],
+          d: 2,
+        }),
+        mcq("ts-basics-dts", {
+          q: "What is a `.d.ts` file?",
+          why: "A **declaration file**: it contains only type information — signatures, interfaces, `declare` statements — and no implementation. It describes the shape of JavaScript that exists elsewhere, so TypeScript can type-check code that uses it.\n\nYou meet them in three places. Libraries written in TypeScript ship generated `.d.ts` files next to their compiled `.js` (`\"declaration\": true` produces them). Libraries written in plain JavaScript get community types from DefinitelyTyped, installed as `@types/lodash` and friends. And you write small ones yourself, e.g. `declare module \"*.svg\"` so imports of assets type-check, or to augment a global.\n\nNothing in a `.d.ts` runs, and the compiler emits no JavaScript for it. `skipLibCheck: true` tells the compiler not to type-check these files internally, which speeds builds and hides conflicts between third-party typings.",
+          tip: "Mentioning `@types/` and `declare module` shows you have wired up an untyped library before.",
+          c: ["static-types", "tooling", "packages"],
+          d: 1,
+          choices: [
+            {
+              t: "A types-only file describing the shape of JavaScript code, with no implementation",
+              ok: true,
+              why: "Correct — it exists purely for the type checker.",
+            },
+            {
+              t: "A compiled TypeScript file ready to run in Node",
+              why: "Compiled output is `.js`; the `.d.ts` sits beside it describing its types.",
+            },
+            {
+              t: "A debug build of a TypeScript module with source maps",
+              why: "Source maps are `.map` files. The `d` stands for declaration.",
+            },
+            {
+              t: "A file of runtime validators generated from your interfaces",
+              why: "TypeScript generates no runtime validation; libraries such as Zod fill that role.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -473,6 +558,32 @@ config.retries = 5;`,
           d: 3,
           secs: 150,
         }),
+        mcq("ts-util-index-signature", {
+          q: "`const prices: Record<string, number> = {};` — what is the type of `prices[\"widget\"]` under default `strict` settings?",
+          why: "**`number`** — even though the key may well be missing and the real value `undefined`. `Record<string, number>` is equivalent to the index signature `{ [key: string]: number }`, and an index signature promises a value for *every* possible key. TypeScript takes that promise at face value.\n\nThe fix is the `noUncheckedIndexedAccess` compiler option, which is **not** part of `strict`. With it on, indexed reads through a signature become `number | undefined`, forcing a check before use. Alternatives are a `Map<string, number>`, whose `get` already returns `number | undefined`, or narrowing the key type.\n\nWhere `Record` genuinely shines is with a **finite key union**: `Record<Status, string>` requires every status to be present, which is a compile-time completeness check a plain index signature cannot give you.",
+          tip: "Naming `noUncheckedIndexedAccess` — and that `strict` does not include it — is a strong signal.",
+          c: ["utility-types", "nullability"],
+          d: 3,
+          choices: [
+            {
+              t: "`number`, even though the key may be missing; `noUncheckedIndexedAccess` makes it `number | undefined`",
+              ok: true,
+              why: "Correct — the index signature promises a value for every key.",
+            },
+            {
+              t: "`number | undefined`, because `strict` includes unchecked-index protection",
+              why: "`noUncheckedIndexedAccess` is a separate flag outside `strict`.",
+            },
+            {
+              t: "A compile error, because `\"widget\"` is not a declared key",
+              why: "A `string` index signature accepts any string key.",
+            },
+            {
+              t: "`unknown`, because the object was initialised empty",
+              why: "The annotation, not the initial value, determines the type.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -567,6 +678,65 @@ el.textContent = "hi";`,
           why: "False — TypeScript is **structurally** typed. Any class with the required members is compatible, whether or not it declares `implements`. Writing `implements` is useful because it makes the compiler check the class *at its definition* rather than at each use site, so errors point at the right file — but it is not required for assignability.\n\nC# is the contrast: nominally typed, where the declaration *is* the contract. On a full-stack interview covering both, naming this difference shows you have not just pattern-matched one onto the other.",
           c: ["structural-typing", "oop"],
           d: 3,
+        }),
+        mcq("ts-config-satisfies", {
+          q: "What does `satisfies` do here that a `: Record<Route, string | string[]>` annotation would not?",
+          code: `type Route = "home" | "orders";
+
+const paths = {
+  home: "/",
+  orders: ["/orders", "/orders/:id"],
+} satisfies Record<Route, string | string[]>;`,
+          lang: "typescript",
+          why: "It **checks the value against the type without changing the value's inferred type**. The object must match `Record<Route, string | string[]>` — a missing route or a misspelled key is a compile error — but `paths` keeps its own inferred type, `{ home: string; orders: string[] }`, so `paths.home.toUpperCase()` and `paths.orders.map(...)` both compile without narrowing.\n\nWith an annotation, the variable's type *becomes* `Record<Route, string | string[]>`: you get the same check, but every property is now the union, so each use needs a `typeof` or `Array.isArray` check first.\n\nNote the strings themselves are still widened to `string`; adding `as const` before `satisfies` preserves the literal values too.\n\n`satisfies` is purely compile-time — like everything else in TypeScript, it adds no runtime check.",
+          tip: "Summarise as 'validate without widening' — the phrase interviewers are listening for.",
+          c: ["static-types", "utility-types"],
+          d: 2,
+          choices: [
+            {
+              t: "It checks the object matches the type but keeps the object's own, more specific inferred type",
+              ok: true,
+              why: "Correct — validate without widening.",
+            },
+            {
+              t: "It validates the object at runtime",
+              why: "Purely compile-time, like all TypeScript types.",
+            },
+            {
+              t: "It casts the object to the type, skipping the check",
+              why: "That is `as`. `satisfies` performs a full check and errors on a mismatch.",
+            },
+            {
+              t: "It makes every property `readonly`",
+              why: "That is `as const` or `Readonly<T>`.",
+            },
+          ],
+        }),
+        mcq("ts-config-strictnull", {
+          q: "What changes when `strictNullChecks` is turned on?",
+          why: "`null` and `undefined` **stop being members of every type**. Without the flag, `let name: string = null` compiles, and any `string` might secretly be null — the type system is silent about the most common runtime crash in JavaScript. With it on, `null` and `undefined` must be declared explicitly (`string | null`), and TypeScript forces you to handle them before use through narrowing, optional chaining, or `??`.\n\nIt also makes lookups honest: `array.find(...)` returns `T | undefined`, and optional properties are `T | undefined`.\n\nIt is part of `strict`, and turning it on in an existing codebase usually produces a large wave of errors — each one a place a null could have slipped through. Because the flag is project-wide, teams migrating usually enable it through a separate tsconfig that lists the already-fixed files and grows over time, or through a plugin such as `typescript-strict-plugin`.",
+          tip: "Call it 'the flag that makes TypeScript catch null reference bugs' — that is its whole purpose.",
+          c: ["nullability", "static-types", "tooling"],
+          d: 1,
+          choices: [
+            {
+              t: "`null` and `undefined` are no longer assignable to other types unless declared, so you must handle them",
+              ok: true,
+              why: "Correct — nullability becomes part of the type.",
+            },
+            {
+              t: "TypeScript inserts runtime null checks into the compiled output",
+              why: "No runtime code is added; it is a compile-time analysis.",
+            },
+            {
+              t: "Variables can no longer be assigned `null` at all",
+              why: "They can, if their type includes `null`, e.g. `string | null`.",
+            },
+            {
+              t: "It only affects `any`-typed values",
+              why: "It affects every type; `any` is exempt from checking regardless.",
+            },
+          ],
         }),
       ],
     }),

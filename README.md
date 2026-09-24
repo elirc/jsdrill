@@ -15,7 +15,7 @@ npm run dev          # http://localhost:3000
 
 ## What it is
 
-229 questions across 50 modules and 10 tracks, each with a teaching explanation and a note on why an interviewer asks it. FSRS spaced repetition schedules each one for the moment you're about to forget it.
+384 questions across 55 modules and 10 tracks, each with a teaching explanation and a note on why an interviewer asks it. FSRS spaced repetition schedules each one for the moment you're about to forget it.
 
 Every module carries 4–6 **key ideas** — the things you'd want in your head before the first question. You read them before you first drill the module, and they're collected on a **Cheat Sheet** page for a pre-interview skim.
 
@@ -38,11 +38,11 @@ Multiple choice, predict-output and fill-the-blank give you **one retry** after 
 
 | Track | Covers |
 |---|---|
-| **JavaScript** | Coercion, scope, closures, `this`, prototypes, the event loop, memory |
+| **JavaScript** | Coercion, scope, closures, functions & binding, the DOM and events, `this`, prototypes, the event loop, memory |
 | **TypeScript** | `type` vs `interface`, narrowing, generics, utility types, `strict` |
 | **React** | State, effects and dependencies, keys, forms, data fetching, context, memoisation |
 | **Node & Express** | The runtime, middleware pipeline, REST APIs, auth, production concerns |
-| **C#** | Value vs reference, OOP, LINQ, `async`/`await`, records, disposal |
+| **C#** | The CLR & memory, value vs reference, OOP, delegates & events, LINQ, `async`/`await`, records, SOLID & patterns |
 | **ASP.NET Core & EF Core** | DI and lifetimes, the pipeline, controllers, EF querying and migrations, config |
 | **Databases & SQL** | Querying, joins, schema design, transactions, indexes |
 | **Web & HTTP** | Methods and status codes, REST design, cookies, CORS, security |

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useState } from "react";
 import { CodeBlock, CodeInline } from "@/components/CodeBlock";
 import { Button, Inline } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type {
   Choice,
+  CodePayload,
   DrillItem,
   FillBlankPayload,
   Grade,
@@ -31,7 +32,6 @@ export type AnswerProps = {
   grade: Grade | null;
   /** Once true the answer is shown and inputs lock. */
   revealed: boolean;
-  onSubmit: () => void;
 };
 
 /** Kinds that offer a second attempt after a first miss. */
@@ -40,6 +40,41 @@ export const RETRYABLE_KINDS: ReadonlySet<DrillItem["kind"]> = new Set([
   "predict-output",
   "fill-blank",
 ]);
+
+/**
+ * Answer buttons carry this attribute so the session's Enter handler
+ * treats "focus on an option, press Enter" as "check my answer" rather
+ * than re-clicking the option.
+ */
+const CHOICE_ATTR = { "data-drill-choice": "" };
+
+/** Digit shortcuts (1–9) for picking an option, ignored while typing. */
+function useDigitShortcuts(count: number, enabled: boolean, pick: (index: number) => void) {
+  const onKey = useEffectEvent((e: KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) {
+      return;
+    }
+    const n = Number.parseInt(e.key, 10);
+    if (n >= 1 && n <= count) {
+      e.preventDefault();
+      pick(n - 1);
+    }
+  });
+
+  useEffect(() => {
+    if (!enabled) return;
+    const listener = (e: KeyboardEvent) => onKey(e);
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
+  }, [enabled]);
+}
+
+/** Screen-reader-only verdict text, so colour is never the only signal. */
+function SrVerdict({ children }: { children: string }) {
+  return <span className="sr-only"> — {children}</span>;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Choice list — shared by mcq, multi and predict-output
@@ -70,25 +105,17 @@ function ChoiceList({
     );
   }, [retrying, grade]);
 
-  // Keyboard shortcuts: 1-9 pick an option.
-  useEffect(() => {
-    if (revealed) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const target = e.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA)$/.test(target.tagName)) return;
-      const n = Number.parseInt(e.key, 10);
-      if (n >= 1 && n <= choices.length && !eliminated.has(choices[n - 1].id)) {
-        e.preventDefault();
-        onToggle(choices[n - 1].id);
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [choices, revealed, eliminated, onToggle]);
+  useDigitShortcuts(choices.length, !revealed, (index) => {
+    const choice = choices[index];
+    if (!eliminated.has(choice.id)) onToggle(choice.id);
+  });
 
   return (
-    <div className="flex flex-col gap-2">
+    <div
+      role="group"
+      aria-label={multi ? "Answer options — select all that apply" : "Answer options — pick one"}
+      className="flex flex-col gap-2"
+    >
       {choices.map((choice, index) => {
         const isSelected = selected.has(choice.id);
         const verdict = grade?.choices?.find((c) => c.id === choice.id);
@@ -108,6 +135,16 @@ function ChoiceList({
         };
 
         const disabled = revealed || isEliminated;
+        const srVerdict =
+          tone === "right"
+            ? verdict?.chosen
+              ? "correct, your pick"
+              : "correct answer"
+            : tone === "wrong"
+              ? isEliminated
+                ? "your first pick, wrong"
+                : "your pick, wrong"
+              : null;
 
         return (
           <div key={choice.id}>
@@ -116,6 +153,7 @@ function ChoiceList({
               disabled={disabled}
               onClick={() => onToggle(choice.id)}
               aria-pressed={isSelected}
+              {...CHOICE_ATTR}
               className={cn(
                 "w-full text-left rounded-lg border px-4 py-3.5 flex items-start gap-3",
                 "transition-all duration-150",
@@ -126,6 +164,7 @@ function ChoiceList({
               style={styles[tone]}
             >
               <span
+                aria-hidden
                 className={cn(
                   "flex-none mt-0.5 h-6 w-6 flex items-center justify-center text-[12px] font-semibold",
                   multi ? "rounded-[6px]" : "rounded-full"
@@ -158,6 +197,7 @@ function ChoiceList({
                 ) : (
                   <Inline>{choice.text}</Inline>
                 )}
+                {srVerdict && <SrVerdict>{srVerdict}</SrVerdict>}
               </span>
             </button>
 
@@ -184,7 +224,7 @@ function ChoiceList({
 // Single choice (mcq / predict-output)
 // ─────────────────────────────────────────────────────────────
 
-export function SingleChoice({ item, response, onChange, grade, revealed }: AnswerProps) {
+function SingleChoice({ item, response, onChange, grade, revealed }: AnswerProps) {
   const payload = item.payload as McqPayload | PredictOutputPayload;
   const chosen =
     response.kind === "mcq" || response.kind === "predict-output" ? response.choiceId : null;
@@ -211,7 +251,7 @@ export function SingleChoice({ item, response, onChange, grade, revealed }: Answ
 // Multi-select
 // ─────────────────────────────────────────────────────────────
 
-export function MultiChoice({ item, response, onChange, grade, revealed }: AnswerProps) {
+function MultiChoice({ item, response, onChange, grade, revealed }: AnswerProps) {
   const payload = item.payload as MultiPayload;
   const chosen = response.kind === "multi" ? response.choiceIds : [];
   const correctCount = payload.choices.filter((c) => c.correct).length;
@@ -240,13 +280,19 @@ export function MultiChoice({ item, response, onChange, grade, revealed }: Answe
 // True / false
 // ─────────────────────────────────────────────────────────────
 
-export function TrueFalse({ item, response, onChange, revealed }: AnswerProps) {
+const TRUE_FALSE = [true, false] as const;
+
+function TrueFalse({ item, response, onChange, revealed }: AnswerProps) {
   const payload = item.payload as TrueFalsePayload;
   const value = response.kind === "truefalse" ? response.value : null;
 
+  useDigitShortcuts(2, !revealed, (index) =>
+    onChange({ kind: "truefalse", value: TRUE_FALSE[index] })
+  );
+
   return (
-    <div className="grid grid-cols-2 gap-3">
-      {[true, false].map((option) => {
+    <div role="group" aria-label="True or false" className="grid grid-cols-2 gap-3">
+      {TRUE_FALSE.map((option, index) => {
         const selected = value === option;
         const isAnswer = payload.answer === option;
 
@@ -268,13 +314,25 @@ export function TrueFalse({ item, response, onChange, revealed }: AnswerProps) {
             type="button"
             disabled={revealed}
             onClick={() => onChange({ kind: "truefalse", value: option })}
+            aria-pressed={selected}
+            {...CHOICE_ATTR}
             className={cn(
               "rounded-lg border py-4 font-medium text-[16px] transition-all duration-150",
+              "inline-flex items-center justify-center gap-2",
               !revealed && "hover:brightness-[1.15] cursor-pointer"
             )}
             style={styles[tone]}
           >
+            {tone === "right" && <span aria-hidden>✓</span>}
+            {tone === "wrong" && <span aria-hidden>✕</span>}
+            {!revealed && (
+              <span aria-hidden className="text-[12px] opacity-50 tabular-nums">
+                {index + 1}
+              </span>
+            )}
             {option ? "True" : "False"}
+            {tone === "right" && <SrVerdict>{selected ? "correct, your pick" : "correct answer"}</SrVerdict>}
+            {tone === "wrong" && <SrVerdict>your pick, wrong</SrVerdict>}
           </button>
         );
       })}
@@ -286,7 +344,7 @@ export function TrueFalse({ item, response, onChange, revealed }: AnswerProps) {
 // Fill in the blanks
 // ─────────────────────────────────────────────────────────────
 
-export function FillBlank({ item, response, onChange, grade, revealed, onSubmit }: AnswerProps) {
+function FillBlank({ item, response, onChange, grade, revealed }: AnswerProps) {
   const payload = item.payload as FillBlankPayload;
   const values = response.kind === "fill-blank" ? response.values : {};
   const retrying = grade !== null && !revealed;
@@ -309,6 +367,7 @@ export function FillBlank({ item, response, onChange, grade, revealed, onSubmit 
     return parts;
   }, [payload.template]);
 
+  // Enter in a blank is handled by the session (it checks the answer).
   return (
     <div className="flex flex-col gap-3">
       <div
@@ -325,50 +384,61 @@ export function FillBlank({ item, response, onChange, grade, revealed, onSubmit 
               );
             }
 
-            const blank = payload.blanks.find((b) => b.id === seg.id);
+            const blankIndex = payload.blanks.findIndex((b) => b.id === seg.id);
+            const blank = payload.blanks[blankIndex];
             const verdict = grade?.blanks?.find((b) => b.id === seg.id);
             // During a retry, blanks already correct are locked; only
             // the wrong ones stay editable.
             const locked = revealed || (retrying && verdict?.correct === true);
             const marked = verdict !== undefined && (revealed || retrying);
+            const right = marked && verdict?.correct === true;
+            const label = `Blank ${blankIndex + 1}${blank?.hint ? ` (hint: ${blank.hint})` : ""}${
+              marked ? (right ? ", correct" : ", wrong") : ""
+            }`;
 
             return (
-              <input
-                key={i}
-                type="text"
-                value={values[seg.id] ?? ""}
-                disabled={locked}
-                spellCheck={false}
-                autoComplete="off"
-                placeholder={blank?.hint ? "?" : ""}
-                title={blank?.hint}
-                onChange={(e) =>
-                  onChange({
-                    kind: "fill-blank",
-                    values: { ...values, [seg.id]: e.target.value },
-                  })
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !revealed) onSubmit();
-                }}
-                className="font-mono text-[14px] px-2 py-0.5 mx-0.5 rounded outline-none text-center"
-                style={{
-                  width: `${Math.max(6, (blank?.width ?? 8) + 1)}ch`,
-                  background: marked
-                    ? verdict?.correct
-                      ? "var(--good-soft)"
-                      : "var(--bad-soft)"
-                    : "var(--surface)",
-                  border: `1px solid ${
-                    marked
-                      ? verdict?.correct
-                        ? "var(--good)"
-                        : "var(--bad)"
-                      : "var(--border-strong)"
-                  }`,
-                  color: "var(--text)",
-                }}
-              />
+              <span key={i} className="inline-flex items-center whitespace-nowrap">
+                <input
+                  type="text"
+                  value={values[seg.id] ?? ""}
+                  disabled={locked}
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  aria-label={label}
+                  aria-invalid={marked && !right ? true : undefined}
+                  placeholder={blank?.hint ? "?" : ""}
+                  title={blank?.hint}
+                  onChange={(e) =>
+                    onChange({
+                      kind: "fill-blank",
+                      values: { ...values, [seg.id]: e.target.value },
+                    })
+                  }
+                  className="font-mono text-[14px] px-2 py-0.5 mx-0.5 rounded outline-none text-center"
+                  style={{
+                    width: `${Math.max(6, (blank?.width ?? 8) + 1)}ch`,
+                    background: marked
+                      ? right
+                        ? "var(--good-soft)"
+                        : "var(--bad-soft)"
+                      : "var(--surface)",
+                    border: `1px solid ${
+                      marked ? (right ? "var(--good)" : "var(--bad)") : "var(--border-strong)"
+                    }`,
+                    color: "var(--text)",
+                  }}
+                />
+                {marked && (
+                  <span
+                    aria-hidden
+                    className="text-[12px] font-bold mr-0.5"
+                    style={{ color: right ? "var(--good)" : "var(--bad)" }}
+                  >
+                    {right ? "✓" : "✕"}
+                  </span>
+                )}
+              </span>
             );
           })}
         </pre>
@@ -399,7 +469,10 @@ export function FillBlank({ item, response, onChange, grade, revealed, onSubmit 
           ?.filter((b) => !b.correct)
           .map((b) => (
             <p key={b.id} className="text-[13.5px] animate-rise" style={{ color: "var(--text-muted)" }}>
-              Blank {Number(b.id)}: expected{" "}
+              <span aria-hidden style={{ color: "var(--bad)" }}>
+                ✕{" "}
+              </span>
+              Blank {payload.blanks.findIndex((p) => p.id === b.id) + 1}: expected{" "}
               <code className="md-code" style={{ color: "var(--good)" }}>
                 {b.accept[0]}
               </code>
@@ -419,114 +492,119 @@ export function FillBlank({ item, response, onChange, grade, revealed, onSubmit 
 // Ordering
 // ─────────────────────────────────────────────────────────────
 
-export function OrderSteps({ item, response, onChange, grade, revealed }: AnswerProps) {
+function OrderSteps({ item, response, onChange, grade, revealed }: AnswerProps) {
   const payload = item.payload as OrderPayload;
-
-  // Shuffling reads Math.random, so it happens in an effect rather than
-  // during render — and only once per item, so re-renders never reorder
-  // the list under the user's cursor.
-  const shuffled = useRef<string[] | null>(null);
+  // The session seeds a shuffled order when the item loads.
   const current = response.kind === "order" ? response.order : [];
-
-  useEffect(() => {
-    if (response.kind !== "order" || response.order.length > 0) return;
-
-    if (!shuffled.current) {
-      const ids = payload.steps.map((s) => s.id);
-      for (let i = ids.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [ids[i], ids[j]] = [ids[j], ids[i]];
-      }
-      if (ids.length > 1 && ids.every((id, i) => id === payload.steps[i].id)) {
-        [ids[0], ids[1]] = [ids[1], ids[0]];
-      }
-      shuffled.current = ids;
-    }
-
-    onChange({ kind: "order", order: shuffled.current });
-  }, [payload.steps, response, onChange]);
+  const [announcement, setAnnouncement] = useState("");
 
   const textById = new Map(payload.steps.map((s) => [s.id, s.text]));
 
   function move(index: number, direction: -1 | 1) {
-    const next = [...current];
     const target = index + direction;
-    if (target < 0 || target >= next.length) return;
+    if (target < 0 || target >= current.length) return;
+    const next = [...current];
     [next[index], next[target]] = [next[target], next[index]];
     onChange({ kind: "order", order: next });
+    setAnnouncement(`Moved to position ${target + 1} of ${next.length}.`);
   }
 
   return (
     <div className="flex flex-col gap-2">
       {!revealed && (
-        <p className="text-[13px] mb-1" style={{ color: "var(--text-muted)" }}>
+        <p className="text-[13px] mb-1" style={{ color: "var(--text-muted)" }} id={`order-help-${item.id}`}>
           Use the arrows to put these in the correct order.
         </p>
       )}
+      <p className="sr-only" aria-live="polite">
+        {announcement}
+      </p>
 
-      {(revealed ? payload.steps.map((s) => s.id) : current).map((id, index) => {
-        const verdict = grade?.order?.find((o) => o.id === id);
-        const wasRight = verdict ? verdict.givenIndex === verdict.correctIndex : false;
+      <ol className="flex flex-col gap-2" aria-describedby={revealed ? undefined : `order-help-${item.id}`}>
+        {(revealed ? payload.steps.map((s) => s.id) : current).map((id, index) => {
+          const verdict = grade?.order?.find((o) => o.id === id);
+          const wasRight = verdict ? verdict.givenIndex === verdict.correctIndex : false;
+          const text = textById.get(id) ?? "";
+          const short = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+          const atTop = index === 0;
+          const atBottom = index === current.length - 1;
 
-        return (
-          <div
-            key={id}
-            className="flex items-stretch gap-2 rounded-lg border transition-all duration-150"
-            style={{
-              background: revealed
-                ? wasRight
-                  ? "var(--good-soft)"
-                  : "var(--bad-soft)"
-                : "var(--surface)",
-              borderColor: revealed ? (wasRight ? "var(--good)" : "var(--bad)") : "var(--border)",
-            }}
-          >
-            <div
-              className="flex-none w-10 flex items-center justify-center text-[13px] font-semibold border-r"
+          return (
+            <li
+              key={id}
+              className="flex items-stretch gap-2 rounded-lg border transition-all duration-150"
               style={{
-                color: revealed ? (wasRight ? "var(--good)" : "var(--bad)") : "var(--text-faint)",
-                borderColor: "var(--border)",
+                background: revealed
+                  ? wasRight
+                    ? "var(--good-soft)"
+                    : "var(--bad-soft)"
+                  : "var(--surface)",
+                borderColor: revealed ? (wasRight ? "var(--good)" : "var(--bad)") : "var(--border)",
               }}
             >
-              {index + 1}
-            </div>
-
-            <div className="flex-1 py-3 pr-2 text-[14.5px] leading-relaxed" style={{ color: "var(--text)" }}>
-              {textById.get(id)}
-              {revealed && verdict && !wasRight && (
-                <span className="ml-2 text-[12px]" style={{ color: "var(--bad)" }}>
-                  (you had it at {verdict.givenIndex + 1})
-                </span>
-              )}
-            </div>
-
-            {!revealed && (
-              <div className="flex-none flex flex-col justify-center pr-1.5 gap-0.5">
-                <button
-                  type="button"
-                  aria-label="Move up"
-                  disabled={index === 0}
-                  onClick={() => move(index, -1)}
-                  className="h-5 w-7 rounded text-[10px] disabled:opacity-25 hover:brightness-150"
-                  style={{ background: "var(--bg-inset)", color: "var(--text-muted)" }}
-                >
-                  ▲
-                </button>
-                <button
-                  type="button"
-                  aria-label="Move down"
-                  disabled={index === current.length - 1}
-                  onClick={() => move(index, 1)}
-                  className="h-5 w-7 rounded text-[10px] disabled:opacity-25 hover:brightness-150"
-                  style={{ background: "var(--bg-inset)", color: "var(--text-muted)" }}
-                >
-                  ▼
-                </button>
+              <div
+                aria-hidden
+                className="flex-none w-10 flex items-center justify-center gap-0.5 text-[13px] font-semibold border-r"
+                style={{
+                  color: revealed ? (wasRight ? "var(--good)" : "var(--bad)") : "var(--text-faint)",
+                  borderColor: "var(--border)",
+                }}
+              >
+                {revealed && <span>{wasRight ? "✓" : "✕"}</span>}
+                {index + 1}
               </div>
-            )}
-          </div>
-        );
-      })}
+
+              <div
+                className="flex-1 min-w-0 py-3 pr-2 text-[14.5px] leading-relaxed"
+                style={{ color: "var(--text)" }}
+              >
+                {text}
+                {revealed && verdict && (
+                  <span
+                    className={cn("ml-2 text-[12px]", wasRight && "sr-only")}
+                    style={{ color: wasRight ? "var(--good)" : "var(--bad)" }}
+                  >
+                    {wasRight ? "— in the right place" : `(you had it at ${verdict.givenIndex + 1})`}
+                  </span>
+                )}
+              </div>
+
+              {!revealed && (
+                <div className="flex-none flex items-center pr-1.5 gap-1">
+                  {/* aria-disabled rather than disabled, so focus stays on
+                      the button when a step reaches the top or bottom. */}
+                  <button
+                    type="button"
+                    aria-label={`Move up: ${short}`}
+                    aria-disabled={atTop}
+                    onClick={() => move(index, -1)}
+                    className={cn(
+                      "h-9 w-9 rounded-md text-[12px] transition-all",
+                      atTop ? "opacity-25 cursor-default" : "hover:brightness-150"
+                    )}
+                    style={{ background: "var(--bg-inset)", color: "var(--text-muted)" }}
+                  >
+                    <span aria-hidden>▲</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move down: ${short}`}
+                    aria-disabled={atBottom}
+                    onClick={() => move(index, 1)}
+                    className={cn(
+                      "h-9 w-9 rounded-md text-[12px] transition-all",
+                      atBottom ? "opacity-25 cursor-default" : "hover:brightness-150"
+                    )}
+                    style={{ background: "var(--bg-inset)", color: "var(--text-muted)" }}
+                  >
+                    <span aria-hidden>▼</span>
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }
@@ -542,13 +620,14 @@ const SELF_RATINGS: { value: SelfRating; label: string; hint: string; color: str
   { value: 4, label: "Nailed it", hint: "Would satisfy an interviewer", color: "var(--good)" },
 ];
 
-export function ExplainIt({ response, onChange, grade, revealed, item }: AnswerProps) {
+function ExplainIt({ response, onChange, grade, revealed, item }: AnswerProps) {
   const payload = item.payload as ShortPayload;
   const text = response.kind === "short" ? response.text : "";
   const rating = response.kind === "short" ? response.selfRating : null;
   const [peeked, setPeeked] = useState(false);
   const showAnswer = peeked || revealed;
   const locked = grade !== null && revealed;
+  const notesId = `explain-notes-${item.id}`;
 
   return (
     <div className="flex flex-col gap-4">
@@ -556,12 +635,12 @@ export function ExplainIt({ response, onChange, grade, revealed, item }: AnswerP
         <label
           className="block text-[13.5px] mb-2"
           style={{ color: "var(--text-muted)" }}
-          htmlFor="explain-notes"
+          htmlFor={notesId}
         >
           Say your answer out loud first — that&apos;s the actual practice. Jot the key points if it helps.
         </label>
         <textarea
-          id="explain-notes"
+          id={notesId}
           value={text}
           rows={4}
           disabled={locked}
@@ -611,7 +690,9 @@ export function ExplainIt({ response, onChange, grade, revealed, item }: AnswerP
                   className="flex gap-2.5 text-[14.5px] leading-relaxed"
                   style={{ color: "var(--text)" }}
                 >
-                  <span style={{ color: "var(--accent)" }}>•</span>
+                  <span aria-hidden style={{ color: "var(--accent)" }}>
+                    •
+                  </span>
                   <span>{point}</span>
                 </li>
               ))}
@@ -620,16 +701,22 @@ export function ExplainIt({ response, onChange, grade, revealed, item }: AnswerP
 
           {!locked && (
             <div>
-              <div className="text-[13.5px] mb-2" style={{ color: "var(--text-muted)" }}>
+              <div className="text-[13.5px] mb-2" style={{ color: "var(--text-muted)" }} id={`rate-${item.id}`}>
                 How did you do? This sets when you&apos;ll see it again.
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div
+                role="group"
+                aria-labelledby={`rate-${item.id}`}
+                className="grid grid-cols-2 sm:grid-cols-4 gap-2"
+              >
                 {SELF_RATINGS.map((option) => {
                   const selected = rating === option.value;
                   return (
                     <button
                       key={option.value}
                       type="button"
+                      aria-pressed={selected}
+                      {...CHOICE_ATTR}
                       onClick={() => onChange({ kind: "short", text, selfRating: option.value })}
                       className="rounded-lg border px-3 py-3 text-left transition-all duration-150 hover:brightness-125"
                       style={{
@@ -641,6 +728,7 @@ export function ExplainIt({ response, onChange, grade, revealed, item }: AnswerP
                         className="text-[14px] font-medium"
                         style={{ color: selected ? option.color : "var(--text)" }}
                       >
+                        {selected && <span aria-hidden>✓ </span>}
                         {option.label}
                       </div>
                       <div className="text-[12px] mt-0.5" style={{ color: "var(--text-faint)" }}>
@@ -662,31 +750,25 @@ export function ExplainIt({ response, onChange, grade, revealed, item }: AnswerP
 // Write code
 // ─────────────────────────────────────────────────────────────
 
-export function WriteCode({ item, response, onChange, grade, revealed }: AnswerProps) {
-  const payload = item.payload as { starterCode: string; solutionCode: string };
+function WriteCode({ item, response, onChange, grade, revealed }: AnswerProps) {
+  const payload = item.payload as CodePayload;
+  // The session seeds the starter code when the item loads, so an empty
+  // string here means the learner cleared the editor — respect that.
   const code = response.kind === "code" ? response.code : "";
   const [showSolution, setShowSolution] = useState(false);
-  const initialised = useRef(false);
-
-  useEffect(() => {
-    if (!initialised.current && response.kind === "code" && response.code === "") {
-      initialised.current = true;
-      onChange({ kind: "code", code: payload.starterCode });
-    }
-  }, [payload.starterCode, response, onChange]);
 
   return (
     <div className="flex flex-col gap-3">
       <LazyEditor
-        value={code || payload.starterCode}
+        value={code}
         readOnly={revealed}
         onChange={(next) => onChange({ kind: "code", code: next })}
       />
 
       {revealed && grade?.tests && (
-        <div className="flex flex-col gap-1.5 animate-rise">
+        <ul className="flex flex-col gap-1.5 animate-rise" aria-label="Test results">
           {grade.tests.map((test, i) => (
-            <div
+            <li
               key={i}
               className="rounded-lg border px-3.5 py-3 text-[13.5px]"
               style={{
@@ -695,9 +777,10 @@ export function WriteCode({ item, response, onChange, grade, revealed }: AnswerP
               }}
             >
               <div className="flex items-center gap-2">
-                <span style={{ color: test.passed ? "var(--good)" : "var(--bad)" }}>
+                <span aria-hidden style={{ color: test.passed ? "var(--good)" : "var(--bad)" }}>
                   {test.passed ? "✓" : "✕"}
                 </span>
+                <span className="sr-only">{test.passed ? "Passed:" : "Failed:"}</span>
                 <span style={{ color: "var(--text)" }}>{test.testCase.description}</span>
                 {test.testCase.isEdgeCase && (
                   <span
@@ -721,14 +804,19 @@ export function WriteCode({ item, response, onChange, grade, revealed }: AnswerP
                   )}
                 </div>
               )}
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
       {revealed && (
         <div>
-          <Button size="sm" variant="ghost" onClick={() => setShowSolution((s) => !s)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-expanded={showSolution}
+            onClick={() => setShowSolution((s) => !s)}
+          >
             {showSolution ? "Hide" : "Show"} a reference solution
           </Button>
           {showSolution && (
@@ -761,6 +849,7 @@ function LazyEditor(props: { value: string; readOnly: boolean; onChange: (v: str
       <div
         className="rounded-lg border p-4 font-mono text-[13.5px] min-h-[180px]"
         style={{ background: "var(--bg-inset)", borderColor: "var(--border)", color: "var(--text-faint)" }}
+        role="status"
       >
         Loading editor…
       </div>

@@ -7,24 +7,42 @@
  * what makes retrieval effortful, and effortful retrieval is what sticks.
  */
 import { db, schema } from "@/lib/db";
-import { eq, and, lte, inArray, asc, sql } from "drizzle-orm";
+import { eq, and, lte, inArray, sql } from "drizzle-orm";
 import type { DrillItem, Item, Level, SessionSpec, SessionSummary } from "@/types";
+import { DEFAULT_USER_ID } from "./user";
 
-export const DEFAULT_USER_ID = "default-user";
+export { DEFAULT_USER_ID };
 
 type ItemRow = typeof schema.items.$inferSelect;
+type CardRow = typeof schema.userCards.$inferSelect;
+
+/** Upper bound on a session, whatever the query string asks for. */
+export const MAX_SESSION_SIZE = 40;
 
 export async function buildSession(
   spec: SessionSpec,
   userId: string = DEFAULT_USER_ID
 ): Promise<SessionSummary> {
-  const size = Math.max(1, Math.min(spec.size, 40));
+  const requested = Number.isFinite(spec.size) ? Math.floor(spec.size) : 12;
+  const size = Math.max(1, Math.min(requested, MAX_SESSION_SIZE));
   const nowIso = new Date().toISOString();
+
+  // One read of each table per request; everything below filters in
+  // memory. The curriculum is a few hundred rows, so this is far
+  // cheaper than the half-dozen overlapping full-table queries it
+  // replaces.
+  const published = db
+    .select()
+    .from(schema.items)
+    .where(eq(schema.items.isPublished, true))
+    .all();
+  const itemById = new Map(published.map((i) => [i.id, i]));
+  const unlocked = unlockedLevelByTrack(userId);
 
   // Interview mode is a different shape: no reviews, wide coverage,
   // biased toward things the learner has actually unlocked.
   if (spec.mode === "interview") {
-    const items = pickInterviewSet(size, userId);
+    const items = pickInterviewSet(size, published, unlocked);
     return {
       items: enrich(items, userId, new Set()),
       spec: { ...spec, size },
@@ -33,78 +51,65 @@ export async function buildSession(
     };
   }
 
-  const scopeIds = scopedItemIds(spec, userId);
-  const scoped = scopeIds === null ? null : new Set(scopeIds);
-
-  // ─── 1. Overdue reviews ───
-  const dueCards = db
+  const cards = db
     .select()
     .from(schema.userCards)
-    .where(and(eq(schema.userCards.userId, userId), lte(schema.userCards.due, nowIso)))
-    .orderBy(asc(schema.userCards.due))
+    .where(eq(schema.userCards.userId, userId))
     .all()
-    .filter((c) => (scoped ? scoped.has(c.itemId) : true));
+    // Cards for unpublished (removed) content are kept for history but
+    // never scheduled again.
+    .filter((c) => itemById.has(c.itemId));
 
-  const reviewBudget =
-    spec.mode === "weak" ? size : Math.ceil(size * 0.6);
-  const reviewIds = dueCards.slice(0, reviewBudget).map((c) => c.itemId);
+  const scoped = scopedItemIds(spec, published, cards, unlocked);
+  const inScope = (id: string) => (scoped ? scoped.has(id) : true);
 
-  const reviewItems = reviewIds.length
-    ? sortByIds(
-        db.select().from(schema.items).where(inArray(schema.items.id, reviewIds)).all(),
-        reviewIds
-      )
-    : [];
+  // ─── 1. Overdue reviews, most overdue first ───
+  const dueCards = cards
+    .filter((c) => c.due <= nowIso && inScope(c.itemId))
+    .sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
+
+  const reviewBudget = spec.mode === "weak" ? size : Math.ceil(size * 0.6);
+  const reviewItems = dueCards
+    .slice(0, reviewBudget)
+    .map((c) => itemById.get(c.itemId))
+    .filter((i): i is ItemRow => i !== undefined);
 
   // ─── 2. Fill with unseen items ───
-  const seenIds = new Set(
-    db
-      .select({ itemId: schema.userCards.itemId })
-      .from(schema.userCards)
-      .where(eq(schema.userCards.userId, userId))
-      .all()
-      .map((c) => c.itemId)
-  );
+  const seenIds = new Set(cards.map((c) => c.itemId));
+  // A module- or level-scoped session ignores the level gate: the
+  // learner asked for it explicitly.
+  const ignoresGate = spec.mode === "module" || spec.mode === "level";
+  const withinGate = (i: ItemRow) => ignoresGate || i.level <= (unlocked.get(i.trackId) ?? 1);
 
   const remaining = size - reviewItems.length;
   let newItems: ItemRow[] = [];
 
   if (remaining > 0 && spec.mode !== "weak") {
-    const unlocked = unlockedLevelByTrack(userId);
-
-    newItems = db
-      .select()
-      .from(schema.items)
-      .where(eq(schema.items.isPublished, true))
-      .all()
-      .filter((i) => {
-        if (seenIds.has(i.id)) return false;
-        if (scoped && !scoped.has(i.id)) return false;
-        // A module- or level-scoped session ignores the level gate:
-        // the learner asked for it explicitly.
-        if (spec.mode === "module" || spec.mode === "level") return true;
-        return i.level <= (unlocked.get(i.trackId) ?? 1);
-      });
-
-    newItems = spreadAcrossModules(newItems).slice(0, remaining);
+    newItems = spreadAcrossModules(
+      published.filter((i) => !seenIds.has(i.id) && inScope(i.id) && withinGate(i))
+    ).slice(0, remaining);
   }
 
   // ─── 3. If still short, allow already-seen items that aren't due ───
+  // Filler is limited to *seen* items plus whatever the level gate
+  // allows. It used to draw from every published item, so once the
+  // unlocked material ran out a mixed session quietly served unseen
+  // Level-4 questions to a beginner.
   let filler: ItemRow[] = [];
   const stillShort = size - reviewItems.length - newItems.length;
   if (stillShort > 0) {
     const chosen = new Set([...reviewItems, ...newItems].map((i) => i.id));
-    filler = db
-      .select()
-      .from(schema.items)
-      .where(eq(schema.items.isPublished, true))
-      .all()
-      .filter((i) => !chosen.has(i.id) && (scoped ? scoped.has(i.id) : true));
-    filler = shuffle(filler).slice(0, stillShort);
+    filler = shuffle(
+      published.filter(
+        (i) => !chosen.has(i.id) && inScope(i.id) && (seenIds.has(i.id) || withinGate(i))
+      )
+    ).slice(0, stillShort);
   }
 
   const reviewIdSet = new Set(reviewItems.map((i) => i.id));
-  const combined = interleaveByTrack([...reviewItems, ...newItems, ...filler]);
+  const combined = easiestFirstWithinModule(
+    interleaveByTrack([...reviewItems, ...newItems, ...filler])
+  );
 
   return {
     items: enrich(combined, userId, reviewIdSet),
@@ -117,48 +122,38 @@ export async function buildSession(
 // ─── Scoping ───
 
 /** `null` means "no restriction". */
-function scopedItemIds(spec: SessionSpec, userId: string): string[] | null {
+function scopedItemIds(
+  spec: SessionSpec,
+  published: ItemRow[],
+  cards: CardRow[],
+  unlocked: Map<string, number>
+): Set<string> | null {
   if (spec.mode === "module" && spec.moduleId) {
-    return db
-      .select({ id: schema.items.id })
-      .from(schema.items)
-      .where(eq(schema.items.moduleId, spec.moduleId))
-      .all()
-      .map((r) => r.id);
+    return new Set(published.filter((i) => i.moduleId === spec.moduleId).map((i) => i.id));
   }
 
   if (spec.mode === "track" && spec.trackId) {
-    const rows = db
-      .select({ id: schema.items.id, level: schema.items.level })
-      .from(schema.items)
-      .where(eq(schema.items.trackId, spec.trackId))
-      .all();
-    const unlocked = unlockedLevelByTrack(userId).get(spec.trackId) ?? 1;
-    return rows.filter((r) => r.level <= unlocked).map((r) => r.id);
+    const level = unlocked.get(spec.trackId) ?? 1;
+    return new Set(
+      published.filter((i) => i.trackId === spec.trackId && i.level <= level).map((i) => i.id)
+    );
   }
 
   if (spec.mode === "level" && spec.level) {
-    return db
-      .select({ id: schema.items.id })
-      .from(schema.items)
-      .where(eq(schema.items.level, spec.level))
-      .all()
-      .map((r) => r.id);
+    return new Set(published.filter((i) => i.level === spec.level).map((i) => i.id));
   }
 
   if (spec.mode === "weak") {
     // Items whose card has a poor hit rate or low stability.
-    return db
-      .select()
-      .from(schema.userCards)
-      .where(eq(schema.userCards.userId, userId))
-      .all()
-      .filter(
-        (c) =>
-          c.totalCount > 0 &&
-          (c.correctCount / c.totalCount < 0.7 || c.lapses > 0 || c.stability < 7)
-      )
-      .map((c) => c.itemId);
+    return new Set(
+      cards
+        .filter(
+          (c) =>
+            c.totalCount > 0 &&
+            (c.correctCount / c.totalCount < 0.7 || c.lapses > 0 || c.stability < 7)
+        )
+        .map((c) => c.itemId)
+    );
   }
 
   return null;
@@ -179,17 +174,18 @@ function unlockedLevelByTrack(userId: string): Map<string, number> {
  * A mock interview: broad coverage, weighted toward the levels the
  * learner has reached, and never more than two items from one module.
  */
-function pickInterviewSet(size: number, userId: string): ItemRow[] {
-  const unlocked = unlockedLevelByTrack(userId);
+function pickInterviewSet(
+  size: number,
+  published: ItemRow[],
+  unlocked: Map<string, number>
+): ItemRow[] {
+  const eligible = published.filter(
+    (i) => i.level <= Math.min(4, (unlocked.get(i.trackId) ?? 1) + 1)
+  );
 
-  const eligible = db
-    .select()
-    .from(schema.items)
-    .where(eq(schema.items.isPublished, true))
-    .all()
-    .filter((i) => i.level <= Math.min(4, (unlocked.get(i.trackId) ?? 1) + 1));
-
-  const pool = eligible.length >= size ? eligible : db.select().from(schema.items).all();
+  // Too little unlocked to fill the run: widen to everything published
+  // (never to unpublished content).
+  const pool = eligible.length >= size ? eligible : published;
 
   // Round-robin across tracks so no single technology dominates.
   const byTrack = new Map<string, ItemRow[]>();
@@ -244,6 +240,32 @@ function spreadAcrossModules(items: ItemRow[]): ItemRow[] {
       const next = q.shift();
       if (next) out.push(next);
     }
+  }
+  return out;
+}
+
+/**
+ * Interleaving shuffles, which would undo "easier first within a
+ * module". Put that back without moving anything between slots: each
+ * module keeps the positions it was given, and its items are re-dealt
+ * into them easiest first. Same module means same track, so the
+ * no-two-in-a-row-from-one-track property is untouched.
+ */
+function easiestFirstWithinModule(items: ItemRow[]): ItemRow[] {
+  const byModule = new Map<string, number[]>();
+  items.forEach((item, index) => {
+    const slots = byModule.get(item.moduleId) ?? [];
+    slots.push(index);
+    byModule.set(item.moduleId, slots);
+  });
+
+  const out = [...items];
+  for (const slots of byModule.values()) {
+    if (slots.length < 2) continue;
+    const sorted = slots.map((i) => items[i]).sort((a, b) => a.difficulty - b.difficulty);
+    slots.forEach((slot, k) => {
+      out[slot] = sorted[k];
+    });
   }
   return out;
 }
@@ -381,14 +403,16 @@ export function toItem(row: ItemRow): Item {
   };
 }
 
-/** How many items are due right now. */
+/** How many (published) items are due right now. */
 export function dueCount(userId: string = DEFAULT_USER_ID): number {
   const row = db
     .select({ n: sql<number>`count(*)` })
     .from(schema.userCards)
+    .innerJoin(schema.items, eq(schema.userCards.itemId, schema.items.id))
     .where(
       and(
         eq(schema.userCards.userId, userId),
+        eq(schema.items.isPublished, true),
         lte(schema.userCards.due, new Date().toISOString())
       )
     )
@@ -397,11 +421,6 @@ export function dueCount(userId: string = DEFAULT_USER_ID): number {
 }
 
 // ─── Utilities ───
-
-function sortByIds<T extends { id: string }>(rows: T[], ids: string[]): T[] {
-  const order = new Map(ids.map((id, i) => [id, i]));
-  return [...rows].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
-}
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];

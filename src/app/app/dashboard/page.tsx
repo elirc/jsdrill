@@ -1,21 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Badge, Button, Card, EmptyState, ProgressBar, Spinner, Stat } from "@/components/ui";
+import { useApi } from "@/components/useApi";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  ErrorState,
+  LinkButton,
+  ProgressBar,
+  Spinner,
+  Stat,
+} from "@/components/ui";
 import { levelLabel, relativeDate, tint } from "@/lib/utils";
 import type { ConceptStrength, DashboardData, DayActivity } from "@/types";
 
+// The server keys days as UTC calendar dates ("YYYY-MM-DD", from
+// toISOString). `new Date("2026-09-23")` is UTC midnight, so local
+// getters (getDay/getDate) are a day early anywhere west of Greenwich.
+// Read and format them in UTC to keep the label on the right day.
+const dayLabel = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+const utcDay = (key: string) => new Date(`${key}T00:00:00Z`);
+
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
+  const { data, error, retry } = useApi<DashboardData>("/api/dashboard");
 
-  useEffect(() => {
-    fetch("/api/dashboard")
-      .then((r) => r.json())
-      .then((json) => json.success && setData(json.data))
-      .catch(console.error);
-  }, []);
-
+  if (error) {
+    return <ErrorState as="h1" title="Couldn’t load your progress" message={error.message} onRetry={retry} />;
+  }
   if (!data) return <Spinner label="Crunching your numbers…" />;
 
   const { stats } = data;
@@ -24,14 +41,11 @@ export default function DashboardPage() {
     return (
       <Card padding="lg">
         <EmptyState
+          as="h1"
           icon="◔"
           title="No data yet"
           body="Finish a session and this fills up with mastery by track, weak concepts, your review forecast and an activity map."
-          action={
-            <Link href="/app">
-              <Button>Start a session</Button>
-            </Link>
-          }
+          action={<LinkButton href="/app">Start a session</LinkButton>}
         />
       </Card>
     );
@@ -75,9 +89,10 @@ export default function DashboardPage() {
             <Link
               key={track.trackId}
               href={`/app/path/${track.trackSlug}`}
-              className="flex items-center gap-3 group"
+              className="flex items-center gap-3 group rounded-md"
             >
               <span
+                aria-hidden
                 className="h-7 w-7 rounded-md flex items-center justify-center text-[10.5px] font-bold flex-none"
                 style={{ background: tint(track.trackColor, 0.16), color: track.trackColor }}
               >
@@ -94,7 +109,7 @@ export default function DashboardPage() {
                 className="text-[12px] tabular-nums flex-none w-9 text-right"
                 style={{ color: "var(--text-faint)" }}
               >
-                {track.mastery}%
+                {track.mastery}%<span className="sr-only"> mastery</span>
               </span>
               <span
                 className="hidden sm:block text-[11px] flex-none w-28 text-right"
@@ -126,11 +141,14 @@ export default function DashboardPage() {
               {data.weakest.map((concept) => (
                 <ConceptRow key={concept.conceptId} concept={concept} />
               ))}
-              <Link href="/app/drill?mode=weak&size=10" className="mt-2">
-                <Button size="sm" variant="secondary" className="w-full">
-                  Drill weak spots
-                </Button>
-              </Link>
+              <LinkButton
+                href="/app/drill?mode=weak&size=10"
+                size="sm"
+                variant="secondary"
+                className="w-full mt-2"
+              >
+                Drill weak spots
+              </LinkButton>
             </div>
           )}
         </Card>
@@ -193,28 +211,32 @@ export default function DashboardPage() {
 
 // ─────────────────────────────────────────────────────────────
 
-const STRENGTH_COLOR: Record<ConceptStrength["strength"], string> = {
-  none: "var(--text-faint)",
-  shaky: "var(--bad)",
-  learning: "var(--warn)",
-  strong: "var(--good)",
+const STRENGTH: Record<ConceptStrength["strength"], { color: string; label: string }> = {
+  none: { color: "var(--text-faint)", label: "not started" },
+  shaky: { color: "var(--bad)", label: "shaky" },
+  learning: { color: "var(--warn)", label: "learning" },
+  strong: { color: "var(--good)", label: "strong" },
 };
 
 function ConceptRow({ concept }: { concept: ConceptStrength }) {
+  const strength = STRENGTH[concept.strength];
   return (
     <Link
       href={`/app/concepts?c=${concept.conceptSlug}`}
-      className="flex items-center gap-3 py-1 group"
+      className="flex items-center gap-3 py-1 group rounded-md"
     >
       <span
+        aria-hidden
+        title={strength.label}
         className="h-1.5 w-1.5 rounded-full flex-none"
-        style={{ background: STRENGTH_COLOR[concept.strength] }}
+        style={{ background: strength.color }}
       />
       <span
         className="text-[13px] flex-1 min-w-0 truncate group-hover:underline"
         style={{ color: "var(--text)" }}
       >
         {concept.conceptName}
+        <span className="sr-only"> ({strength.label})</span>
       </span>
       <span className="text-[11.5px] flex-none tabular-nums" style={{ color: "var(--text-faint)" }}>
         {concept.accuracy}% · {concept.seenItems}/{concept.totalItems}
@@ -225,9 +247,19 @@ function ConceptRow({ concept }: { concept: ConceptStrength }) {
 
 function Forecast({ forecast }: { forecast: { date: string; count: number }[] }) {
   const max = Math.max(1, ...forecast.map((f) => f.count));
+  const total = forecast.reduce((n, f) => n + f.count, 0);
+  const busiest = forecast.reduce((a, b) => (b.count > a.count ? b : a), forecast[0]);
 
   return (
-    <div className="flex items-end gap-1.5 h-28">
+    <div
+      className="flex items-end gap-1.5 h-28"
+      role="img"
+      aria-label={
+        total === 0
+          ? "Nothing scheduled in the next two weeks."
+          : `${total} reviews over the next two weeks; ${forecast[0]?.count ?? 0} due today; busiest day ${dayLabel.format(utcDay(busiest.date))} with ${busiest.count}.`
+      }
+    >
       {forecast.map((day, i) => {
         const height = day.count === 0 ? 2 : Math.max(6, (day.count / max) * 100);
         return (
@@ -240,11 +272,11 @@ function Forecast({ forecast }: { forecast: { date: string; count: number }[] })
                   background: i === 0 ? "var(--warn)" : "var(--accent)",
                   opacity: day.count === 0 ? 0.25 : 1,
                 }}
-                title={`${day.count} due on ${day.date}`}
+                title={`${day.count} due ${i === 0 ? "today" : `on ${dayLabel.format(utcDay(day.date))}`}`}
               />
             </div>
             <span className="text-[9.5px] tabular-nums" style={{ color: "var(--text-faint)" }}>
-              {i === 0 ? "now" : i % 2 === 0 ? new Date(day.date).getDate() : ""}
+              {i === 0 ? "today" : i % 2 === 0 ? utcDay(day.date).getUTCDate() : ""}
             </span>
           </div>
         );
@@ -259,7 +291,9 @@ function HeatMap({ activity }: { activity: DayActivity[] }) {
   // Pad so the first column starts on a Sunday. The server always
   // sends a full 120-day window, so activity[0] is present.
   const firstDate = activity[0]?.date;
-  const firstDay = firstDate ? new Date(firstDate).getDay() : 0;
+  const firstDay = firstDate ? utcDay(firstDate).getUTCDay() : 0;
+  const answered = activity.reduce((n, d) => n + d.count, 0);
+  const activeDays = activity.filter((d) => d.count > 0).length;
   const cells: (DayActivity | null)[] = [...Array(firstDay).fill(null), ...activity];
 
   const weeks: (DayActivity | null)[][] = [];
@@ -267,7 +301,11 @@ function HeatMap({ activity }: { activity: DayActivity[] }) {
 
   return (
     <div>
-      <div className="flex gap-[3px] overflow-x-auto pb-1">
+      <div
+        className="flex gap-[3px] overflow-x-auto pb-1"
+        role="img"
+        aria-label={`${answered} answers across ${activeDays} active days in the last ${activity.length} days.`}
+      >
         {weeks.map((week, w) => (
           <div key={w} className="flex flex-col gap-[3px]">
             {week.map((day, d) => {
@@ -277,10 +315,12 @@ function HeatMap({ activity }: { activity: DayActivity[] }) {
                 <div
                   key={d}
                   className="h-[11px] w-[11px] rounded-[2.5px]"
-                  title={`${day.date}: ${day.count} answered${day.count ? `, ${day.correct} correct` : ""}`}
+                  title={`${dayLabel.format(utcDay(day.date))}: ${day.count} answered${day.count ? `, ${day.correct} correct` : ""}`}
                   style={{
                     background:
-                      day.count === 0 ? "var(--bg-inset)" : `rgba(124, 140, 255, ${intensity})`,
+                      day.count === 0
+                        ? "var(--bg-inset)"
+                        : `color-mix(in srgb, var(--accent) ${Math.round(intensity * 100)}%, transparent)`,
                   }}
                 />
               );
@@ -289,14 +329,21 @@ function HeatMap({ activity }: { activity: DayActivity[] }) {
         ))}
       </div>
 
-      <div className="flex items-center gap-2 mt-3 text-[11px]" style={{ color: "var(--text-faint)" }}>
+      <div
+        className="flex items-center gap-2 mt-3 text-[11px]"
+        style={{ color: "var(--text-faint)" }}
+        aria-hidden
+      >
         <span>Less</span>
         {[0, 0.3, 0.55, 0.8, 1].map((level) => (
           <span
             key={level}
             className="h-[11px] w-[11px] rounded-[2.5px]"
             style={{
-              background: level === 0 ? "var(--bg-inset)" : `rgba(124, 140, 255, ${level})`,
+              background:
+                level === 0
+                  ? "var(--bg-inset)"
+                  : `color-mix(in srgb, var(--accent) ${Math.round(level * 100)}%, transparent)`,
             }}
           />
         ))}

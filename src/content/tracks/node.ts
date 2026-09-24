@@ -87,6 +87,110 @@ CPU-bound work belongs in \`worker_threads\`, a separate service, or a backgroun
           c: ["packages", "deployment"],
           d: 2,
         }),
+        mcq("node-rt-esm", {
+          q: "Which statement about CommonJS and ES modules in Node is accurate?",
+          why: "**ES modules are statically analysable and loaded asynchronously; CommonJS is loaded synchronously at runtime.** `import`/`export` declarations are resolved before any code runs, which enables top-level `await` and tree-shaking. `require()` is an ordinary function call that reads and executes the file on the spot, so it can be called conditionally, anywhere.\n\nNode decides which system a `.js` file uses from the nearest `package.json`: `\"type\": \"module\"` means ESM, otherwise CommonJS. The `.mjs` and `.cjs` extensions override that per file.\n\nPractical differences you hit: `__dirname` and `__filename` do not exist in ESM (use `import.meta.dirname` in recent Node, or derive them from `import.meta.url`); relative ESM imports need the file extension; and ESM can `import` CommonJS packages. The reverse used to be impossible — Node 22.12+ and 20.19+ can now `require()` an ES module as long as its module graph does not use top-level `await`.",
+          tip: "Mention the `\"type\": \"module\"` switch and the `__dirname` gotcha — both come up the day you migrate.",
+          c: ["modules", "runtime"],
+          d: 2,
+          choices: [
+            {
+              t: "ESM imports are resolved statically before code runs, allowing top-level `await`; `require` runs synchronously at call time",
+              ok: true,
+              why: "Correct — static structure versus a runtime function call.",
+            },
+            {
+              t: "`__dirname` works the same in both module systems",
+              why: "It is a CommonJS wrapper variable and is undefined in ESM.",
+            },
+            {
+              t: "Node picks the module system by scanning the file for `import` statements, regardless of `package.json`",
+              why: "The `\"type\"` field and the file extension decide. Recent Node can fall back to detecting syntax in ambiguous files, but you should not rely on it.",
+            },
+            {
+              t: "CommonJS is deprecated and removed in current Node versions",
+              why: "CommonJS is fully supported and still widespread across npm.",
+            },
+          ],
+        }),
+        mcq("node-rt-nexttick", {
+          q: "What is the difference between `process.nextTick(cb)` and `setImmediate(cb)`?",
+          why: "`process.nextTick` runs `cb` **as soon as the current operation finishes, before the event loop continues** — before any I/O callbacks or timers. `setImmediate` queues `cb` for the **check phase** of the event loop, which comes after the loop has polled for I/O.\n\nSo `nextTick` is 'immediately after this synchronous code', and `setImmediate` is 'on the next turn of the loop, once pending I/O has had a chance'. The names are famously the wrong way round.\n\nThat distinction matters for safety: the nextTick queue is drained completely before the loop moves on, so a callback that keeps scheduling another `nextTick` **starves I/O** — the server stops answering requests. `setImmediate` yields to I/O between iterations, which makes it the better tool for breaking up long work. Node's own documentation recommends `setImmediate` for most cases.",
+          tip: "Saying 'the names are backwards' and 'recursive nextTick starves I/O' covers everything interviewers look for.",
+          c: ["event-loop", "runtime"],
+          d: 3,
+          choices: [
+            {
+              t: "`nextTick` runs before the event loop continues; `setImmediate` runs in the check phase after I/O polling",
+              ok: true,
+              why: "Correct — and recursive `nextTick` can starve I/O.",
+            },
+            {
+              t: "`setImmediate` runs synchronously, `nextTick` on the next loop iteration",
+              why: "Neither is synchronous, and the timing is the other way round — the names are misleading.",
+            },
+            {
+              t: "They are aliases kept for backwards compatibility",
+              why: "They run at different points in the event loop.",
+            },
+            {
+              t: "`nextTick` runs `cb` on a worker thread",
+              why: "All these callbacks run on the main JavaScript thread.",
+            },
+          ],
+        }),
+        mcq("node-rt-streams", {
+          q: "An endpoint serves 2 GB export files with `res.send(await fs.readFile(path))`. Memory spikes and the process crashes under load. What is the fix?",
+          why: "**Stream the file**: `await pipeline(fs.createReadStream(path), res)` (from `node:stream/promises`). Instead of loading the whole file into memory, it is read in small chunks (64 KB by default for file streams) and written to the socket as it goes, so memory use stays flat regardless of file size or concurrent downloads.\n\nThe crucial property is **backpressure**. If the client downloads slowly, the response's internal buffer fills, `write()` starts returning `false`, and `pipeline` pauses reading from disk until the socket drains. Without backpressure, a fast reader and a slow writer means data piles up in memory — the same crash in a different form. That is why you use `pipeline` (or `.pipe`) rather than a hand-written `on('data', chunk => res.write(chunk))` loop, which ignores the signal.\n\n`pipeline` also propagates errors and destroys every stream in the chain on failure, which `.pipe` alone does not.",
+          tip: "Use the word 'backpressure' and explain it as 'the slow side tells the fast side to wait'.",
+          c: ["performance", "runtime"],
+          d: 2,
+          choices: [
+            {
+              t: "Stream it with `pipeline(createReadStream(path), res)`, which reads in chunks and respects backpressure",
+              ok: true,
+              why: "Correct — flat memory, and the slow client throttles the disk reads.",
+            },
+            {
+              t: "Use `fs.readFileSync` so the read does not overlap with other requests",
+              why: "It still loads 2 GB into memory, and it blocks the event loop while doing so.",
+            },
+            {
+              t: "Increase the heap with `--max-old-space-size`",
+              why: "It postpones the crash; memory still scales with file size times concurrent downloads.",
+            },
+            {
+              t: "Read the file in a `data` event handler and call `res.write` for each chunk",
+              why: "Closer, but ignoring `write()` returning `false` means no backpressure — a slow client still lets data pile up.",
+            },
+          ],
+        }),
+        mcq("node-rt-cluster-workers", {
+          q: "What is the difference between the `cluster` module and `worker_threads`?",
+          why: "**`cluster` forks multiple processes that share a listening port; `worker_threads` runs extra threads inside one process.**\n\nCluster workers are full, separate Node processes with their own memory and event loop. The primary process distributes incoming connections among them, so an HTTP server can use every CPU core. That is a way to scale **request handling** — though in containers the same job is usually done by running more replicas, or a process manager like PM2.\n\nWorker threads share the process but each has its own V8 isolate and event loop. They communicate by message passing and can share memory through `SharedArrayBuffer`. They are for **CPU-heavy tasks** — image processing, parsing, hashing — that would otherwise block the main thread's event loop.\n\nNeither makes your ordinary async I/O faster; Node already handles that concurrently on one thread.",
+          tip: "Answer with purpose: cluster scales connections across cores, workers offload CPU work.",
+          c: ["concurrency", "runtime", "performance"],
+          d: 2,
+          choices: [
+            {
+              t: "`cluster` runs separate processes sharing a server port; `worker_threads` runs threads in one process for CPU-bound work",
+              ok: true,
+              why: "Correct — processes for scaling requests, threads for offloading computation.",
+            },
+            {
+              t: "They are the same thing; `cluster` is the older name",
+              why: "Processes with separate memory versus threads within one process.",
+            },
+            {
+              t: "`worker_threads` share all JavaScript variables with the main thread directly",
+              why: "Each has its own isolate; you communicate by messages, and only `SharedArrayBuffer` memory is truly shared.",
+            },
+            {
+              t: "`cluster` is needed for Node to handle more than one request at a time",
+              why: "One Node process already handles many concurrent requests through the event loop.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -504,6 +608,14 @@ Cookie flags worth memorising: \`httpOnly\`, \`Secure\`, \`SameSite\`, \`Max-Age
           tip: "This distinction is a genuine production lesson and it comes up in platform-flavoured interviews.",
           c: ["deployment", "runtime"],
           d: 3,
+        }),
+        tf("node-prod-npm-hooks", {
+          q: "With npm, if `package.json` defines `prebuild`, `build` and `postbuild` scripts, `npm run build` runs all three in that order.",
+          answer: true,
+          why: "True. npm treats any script named `pre<name>` or `post<name>` as a **lifecycle hook** for `<name>`: running `npm run build` runs `prebuild`, then `build`, then `postbuild`. If the pre-script fails with a non-zero exit code, the chain stops and `build` never runs. The same applies to `test`, `start` and any custom name.\n\nIt is handy for things like cleaning the output folder before a build, but it is **implicit** — a reader has to know the convention to see why extra work happens — so many teams prefer being explicit: `\"build\": \"npm run clean && tsc && vite build\"`.\n\nNot every package manager honours arbitrary pre/post scripts — Yarn 2 and later, for example, does not run them — so explicit chaining is also the more portable choice.\n\nSeparately, npm runs install-time lifecycle scripts such as `postinstall` for dependencies, which is a known supply-chain risk; `npm ci --ignore-scripts` switches them off.",
+          tip: "Mention the `postinstall` supply-chain angle — it turns a trivia question into a security answer.",
+          c: ["tooling", "packages"],
+          d: 1,
         }),
       ],
     }),

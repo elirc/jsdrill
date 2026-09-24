@@ -100,6 +100,78 @@ The ones to know precisely: **200** OK, **201** Created, **204** No Content, **3
           d: 2,
           secs: 90,
         }),
+        mcq("web-http-versions", {
+          q: "What does HTTP/3 fix that HTTP/2 does not?",
+          why: "**Head-of-line blocking at the TCP layer.** In one line each:\n\n- **HTTP/1.1** — text protocol, effectively one request at a time per connection, so browsers open around six connections per host.\n- **HTTP/2** — binary framing, many requests **multiplexed** as streams over one TCP connection, plus header compression. But TCP delivers bytes strictly in order, so one lost packet stalls *every* stream on the connection until it is retransmitted.\n- **HTTP/3** — the same model running over **QUIC** on UDP. QUIC handles loss per stream, so a dropped packet only delays the stream it belongs to, and it combines the transport and TLS handshakes for faster connection setup. It also lets a connection survive a network change, such as Wi-Fi to mobile.\n\nThe request and response semantics — methods, status codes, headers — are identical across all three; application code rarely notices which one is in use.",
+          tip: "Say 'HTTP/2 fixed HTTP-level head-of-line blocking; HTTP/3 fixed TCP-level' — that framing is exactly right.",
+          c: ["http-semantics", "performance"],
+          d: 2,
+          choices: [
+            {
+              t: "One lost packet no longer stalls every multiplexed stream, because QUIC recovers loss per stream over UDP",
+              ok: true,
+              why: "Correct — TCP's in-order delivery was the remaining bottleneck.",
+            },
+            {
+              t: "It introduces multiplexing many requests over one connection",
+              why: "HTTP/2 already did that. HTTP/3 keeps multiplexing but moves it onto QUIC.",
+            },
+            {
+              t: "It adds new methods and status codes",
+              why: "Semantics are unchanged; only the transport differs.",
+            },
+            {
+              t: "It makes encryption optional to reduce latency",
+              why: "The reverse: QUIC has TLS 1.3 built in, so HTTP/3 is always encrypted.",
+            },
+          ],
+        }),
+        multi("web-http-caching", {
+          q: "Which statements about HTTP caching headers are correct?",
+          why: "Correct: **`max-age=3600`** means the response is fresh for an hour and can be reused without contacting the server. **`no-store`** means do not store it anywhere — for sensitive responses. And with an **`ETag`**, the client revalidates by sending `If-None-Match`; if nothing changed, the server replies `304 Not Modified` with no body, saving the transfer.\n\nThe trap is **`no-cache`**: it does *not* mean 'do not cache'. It means the response may be stored but must be **revalidated with the server before every use** — typically via the ETag, so an unchanged resource still costs only a small 304.\n\nA common production pattern follows from this: fingerprinted static assets (`app.3f9a1c.js`) get `Cache-Control: public, max-age=31536000, immutable` because a new build means a new filename, while the HTML that references them gets `no-cache` so users always pick up the latest build.",
+          tip: "The `no-cache` versus `no-store` distinction is the single most-asked caching detail.",
+          c: ["http-semantics", "performance"],
+          d: 2,
+          choices: [
+            { t: "`max-age=3600` lets the response be reused for an hour without contacting the server", ok: true },
+            { t: "`no-store` means the response must not be stored in any cache", ok: true },
+            { t: "A matching `If-None-Match` lets the server reply `304 Not Modified` without a body", ok: true },
+            {
+              t: "`no-cache` means the response is never stored",
+              why: "It may be stored, but must be revalidated before each use. `no-store` is the one that forbids storing.",
+            },
+            {
+              t: "`Cache-Control` only affects CDNs, not browsers",
+              why: "Browsers, CDNs and proxies all honour it; `private` and `s-maxage` let you target them separately.",
+            },
+          ],
+        }),
+        mcq("web-http-cdn", {
+          q: "What does putting a CDN in front of a web app actually do?",
+          why: "It **serves cached copies of responses from edge servers close to the user**. The first request for a file in a region goes through to your origin; the CDN stores the response according to its caching headers, and later requests in that region are answered from the edge — lower latency for users, and far less traffic hitting your servers.\n\nWhat gets cached is governed by the headers you send: `Cache-Control` with `max-age`, or `s-maxage`, which applies only to shared caches such as CDNs and proxies, and `private` for anything per-user. That is why static assets (JS, CSS, images, fonts) are the natural fit, and why fingerprinted filenames matter — you can cache for a year and still deploy instantly.\n\nMost CDNs also terminate TLS near the user and absorb some DDoS traffic. What a CDN does not do is make an uncacheable, per-user API response faster by caching it — sending `private` or authenticated responses through a shared cache would be a data leak.",
+          tip: "Tie the CDN back to `Cache-Control` — it shows you know the headers are what actually drive it.",
+          c: ["performance", "deployment", "http-semantics"],
+          d: 1,
+          choices: [
+            {
+              t: "Caches responses at edge locations near users, driven by your caching headers, reducing latency and origin load",
+              ok: true,
+              why: "Correct — geography plus caching.",
+            },
+            {
+              t: "Replicates your database to multiple regions",
+              why: "That is database replication, a separate concern.",
+            },
+            {
+              t: "Compiles and minifies your JavaScript",
+              why: "That is the build tool's job; the CDN serves the output.",
+            },
+            {
+              t: "Caches every API response, including per-user data, to speed up the whole app",
+              why: "Caching per-user responses in a shared cache would leak data between users; mark them `private`.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -279,6 +351,32 @@ Cookies being sent automatically is both their convenience and the reason CSRF e
             { t: "Only if both use HTTPS", why: "They both do here, and it is still cross-origin." },
           ],
         }),
+        mcq("web-realtime", {
+          q: "A dashboard must show order-status changes as they happen. The browser only receives updates; it never sends data back over that channel. What fits best?",
+          why: "**Server-Sent Events (SSE).** The browser opens a normal HTTP request with `new EventSource(\"/api/orders/stream\")` and the server keeps the response open, writing `text/event-stream` messages whenever something changes. It is one-directional (server to client), works through ordinary HTTP infrastructure, and the browser **reconnects automatically**, resuming from the last event id.\n\n**WebSockets** give a full-duplex channel for both directions — the right choice for chat, multiplayer or collaborative editing. They also work here, but you take on more: a protocol upgrade, your own reconnection, heartbeats and message format, and proxies or load balancers configured for long-lived connections.\n\n**Polling** (request every N seconds) is the simplest and perfectly reasonable when a small delay is acceptable, but it wastes requests when nothing changes and adds up to N seconds of latency. Long polling reduces the waste but is effectively a workaround that SSE replaced.",
+          tip: "Match the tool to the direction of data: one-way push is SSE, two-way is WebSockets, 'every minute is fine' is polling.",
+          c: ["http-semantics", "performance"],
+          d: 2,
+          choices: [
+            {
+              t: "Server-Sent Events: a one-way stream over HTTP with automatic reconnection",
+              ok: true,
+              why: "Correct — the simplest tool that matches one-way push.",
+            },
+            {
+              t: "WebSockets, because they are the only way to push from the server",
+              why: "SSE also pushes from the server. WebSockets earn their extra complexity when the client sends messages too.",
+            },
+            {
+              t: "Polling every 100ms, which is effectively real time",
+              why: "That is a constant stream of mostly empty requests per user — very expensive at scale.",
+            },
+            {
+              t: "HTTP/2 server push",
+              why: "Server push pushed resources for the browser's cache, never data to your JavaScript, and browsers have since removed support.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -379,6 +477,32 @@ db.query(q);`,
           c: ["security", "auth", "validation"],
           d: 3,
           secs: 200,
+        }),
+        mcq("web-sec-oauth-oidc", {
+          q: "What is the difference between OAuth 2.0 and OpenID Connect?",
+          why: "**OAuth 2.0 is about authorization; OpenID Connect adds authentication (identity) on top of it.**\n\nOAuth 2.0 lets a user grant an application limited access to an API on their behalf. The app receives an **access token** meant for the API — the app is not supposed to interpret it as proof of who the user is. That was a real problem historically: sites used OAuth for 'log in with X' and had to invent their own ways of learning the identity.\n\nOpenID Connect standardises that missing piece. It is a layer on OAuth 2.0 that adds an **ID token** — a signed JWT with claims about the authenticated user (`sub`, `email`, `name`), intended for the client application — plus a standard `userinfo` endpoint and discovery metadata.\n\nIn a typical SPA plus API setup, the front end uses the ID token to know who is signed in, and sends the access token to the API, which validates it and checks its scopes.",
+          tip: "One sentence wins it: 'OAuth is delegated authorization; OIDC is identity built on it — ID token for the client, access token for the API.'",
+          c: ["auth", "security"],
+          d: 2,
+          choices: [
+            {
+              t: "OAuth 2.0 delegates access to APIs via access tokens; OIDC adds an identity layer with an ID token describing the user",
+              ok: true,
+              why: "Correct — authorization versus identity, with OIDC built on OAuth.",
+            },
+            {
+              t: "They are competing standards; you choose one or the other",
+              why: "OIDC is built on OAuth 2.0 and uses its flows.",
+            },
+            {
+              t: "OAuth 2.0 is for logging users in; OIDC is for calling APIs",
+              why: "Backwards — using bare OAuth for login is the gap OIDC was created to fill.",
+            },
+            {
+              t: "OIDC replaces passwords with JWTs stored in cookies",
+              why: "OIDC defines tokens and flows, not where you store them or how the provider verifies the user.",
+            },
+          ],
         }),
       ],
     }),

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Badge, Button, Card, ProgressBar, ProgressRing, Spinner } from "@/components/ui";
+import { useApi } from "@/components/useApi";
+import { useStoredState } from "@/components/useStoredState";
+import { Badge, Card, ErrorState, LinkButton, ProgressBar, ProgressRing, Spinner } from "@/components/ui";
 import { levelLabel, masteryLabel, tint } from "@/lib/utils";
 import type { TrackProgress } from "@/types";
 
@@ -16,23 +17,31 @@ const SESSION_SIZES = [
   { size: 12, label: "Standard", detail: "~9 min" },
   { size: 20, label: "Long", detail: "~15 min" },
 ];
+const DEFAULT_SIZE = 12;
+
+/** Mirrors the session builder: reviews fill up to 60% of a mixed session. */
+function sessionMix(size: number, due: number) {
+  const reviews = Math.min(due, Math.ceil(size * 0.6));
+  return { reviews, fresh: size - reviews };
+}
 
 export default function TodayPage() {
-  const [data, setData] = useState<PathData | null>(null);
-  const [size, setSize] = useState(12);
+  const { data, error, retry } = useApi<PathData>("/api/path");
+  // The chosen length persists across visits (localStorage, read safely).
+  const [storedSize, setStoredSize] = useStoredState("reps-session-size", String(DEFAULT_SIZE));
+  const size = SESSION_SIZES.some((o) => String(o.size) === storedSize)
+    ? Number(storedSize)
+    : DEFAULT_SIZE;
 
-  useEffect(() => {
-    fetch("/api/path")
-      .then((r) => r.json())
-      .then((json) => json.success && setData(json.data))
-      .catch(console.error);
-  }, []);
-
+  if (error) {
+    return <ErrorState as="h1" title="Couldn’t load today’s plan" message={error.message} onRetry={retry} />;
+  }
   if (!data) return <Spinner label="Loading your plan…" />;
 
   const { today, tracks } = data;
   const goalPct = today.goal > 0 ? (today.answered / today.goal) * 100 : 0;
   const goalMet = today.answered >= today.goal;
+  const mix = sessionMix(size, today.due);
 
   const started = tracks.filter((t) => t.seenItems > 0);
   const totalItems = tracks.reduce((sum, t) => sum + t.totalItems, 0);
@@ -87,29 +96,42 @@ export default function TodayPage() {
         </div>
 
         <div className="mt-6 pt-5 border-t flex flex-col sm:flex-row gap-3 sm:items-center" style={{ borderColor: "var(--border)" }}>
-          <div className="flex gap-1.5 p-1 rounded-lg flex-none" style={{ background: "var(--bg-inset)" }}>
-            {SESSION_SIZES.map((option) => (
-              <button
-                key={option.size}
-                type="button"
-                onClick={() => setSize(option.size)}
-                className="px-3 py-1.5 rounded-md text-[12.5px] font-medium transition-all"
-                style={{
-                  background: size === option.size ? "var(--surface)" : "transparent",
-                  color: size === option.size ? "var(--text)" : "var(--text-faint)",
-                }}
-              >
-                {option.label}
-                <span className="ml-1.5 text-[11px] opacity-60">{option.detail}</span>
-              </button>
-            ))}
+          <div className="flex flex-col gap-1.5">
+            <div
+              role="group"
+              aria-label="Session length"
+              className="grid grid-cols-3 sm:flex gap-1.5 p-1 rounded-lg flex-none"
+              style={{ background: "var(--bg-inset)" }}
+            >
+              {SESSION_SIZES.map((option) => (
+                <button
+                  key={option.size}
+                  type="button"
+                  aria-pressed={size === option.size}
+                  onClick={() => setStoredSize(String(option.size))}
+                  className="px-3 py-1.5 rounded-md text-[12.5px] font-medium transition-all"
+                  style={{
+                    background: size === option.size ? "var(--surface)" : "transparent",
+                    color: size === option.size ? "var(--text)" : "var(--text-faint)",
+                  }}
+                >
+                  {option.label}
+                  <span className="block sm:inline sm:ml-1.5 text-[11px] opacity-60">{option.detail}</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[12.5px] tabular-nums px-1" style={{ color: "var(--text-faint)" }}>
+              {size} questions: {mix.reviews} due · {mix.fresh} new
+            </p>
           </div>
 
-          <Link href={`/app/drill?mode=mixed&size=${size}`} className="flex-1 sm:flex-none sm:ml-auto">
-            <Button size="lg" className="w-full sm:w-auto">
-              Start drilling →
-            </Button>
-          </Link>
+          <LinkButton
+            href={`/app/drill?mode=mixed&size=${size}`}
+            size="lg"
+            className="w-full sm:w-auto sm:ml-auto"
+          >
+            Start drilling →
+          </LinkButton>
         </div>
       </Card>
 
@@ -160,11 +182,14 @@ export default function TodayPage() {
                 </span>
               </div>
             </div>
-            <Link href={`/app/drill?mode=track&trackId=${suggestion.trackId}&size=10`}>
-              <Button variant="secondary" size="sm">
-                Drill
-              </Button>
-            </Link>
+            <LinkButton
+              href={`/app/drill?mode=track&trackId=${suggestion.trackId}&size=10`}
+              variant="secondary"
+              size="sm"
+              aria-label={`Drill ${suggestion.trackName}`}
+            >
+              Drill
+            </LinkButton>
           </div>
         </Card>
       )}
@@ -189,6 +214,7 @@ export default function TodayPage() {
               >
                 <div className="flex items-start gap-3">
                   <span
+                    aria-hidden
                     className="h-8 w-8 rounded-lg flex items-center justify-center text-[12px] font-bold flex-none"
                     style={{ background: tint(track.trackColor, 0.16), color: track.trackColor }}
                   >
@@ -197,15 +223,16 @@ export default function TodayPage() {
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-[14px] font-medium truncate" style={{ color: "var(--text)" }}>
+                      <h3 className="text-[14px] font-medium truncate" style={{ color: "var(--text)" }}>
                         {track.trackName}
-                      </span>
+                      </h3>
                       {track.dueItems > 0 && (
                         <span
                           className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold flex-none"
                           style={{ background: "var(--warn-soft)", color: "var(--warn)" }}
                         >
                           {track.dueItems}
+                          <span className="sr-only"> due</span>
                         </span>
                       )}
                     </div>
@@ -265,17 +292,23 @@ function QuickStart({
         cursor: disabled ? "default" : "pointer",
       }}
     >
-      <div className="text-[17px] mb-2" style={{ color: "var(--accent)" }}>
+      <div className="text-[17px] mb-2" style={{ color: "var(--accent)" }} aria-hidden>
         {icon}
       </div>
-      <div className="text-[14px] font-medium" style={{ color: "var(--text)" }}>
+      <h2 className="text-[14px] font-medium" style={{ color: "var(--text)" }}>
         {title}
-      </div>
+      </h2>
       <p className="text-[12.5px] mt-1 leading-relaxed" style={{ color: "var(--text-muted)" }}>
         {disabled ? disabledNote : body}
       </p>
     </Card>
   );
 
-  return disabled ? content : <Link href={href}>{content}</Link>;
+  return disabled ? (
+    content
+  ) : (
+    <Link href={href} className="block rounded-xl">
+      {content}
+    </Link>
+  );
 }

@@ -12,6 +12,7 @@ export default function Home() {
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span
+              aria-hidden
               className="h-7 w-7 rounded-lg flex items-center justify-center text-[13px] font-bold"
               style={{ background: "var(--accent)", color: "#fff" }}
             >
@@ -188,6 +189,7 @@ export default function Home() {
           className="border-t py-16"
           style={{ borderColor: "var(--border)", background: "var(--bg-raised)" }}
         >
+          <h2 className="sr-only">How it works</h2>
           <div className="max-w-4xl mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-8">
             <Feature
               title="Eight question types"

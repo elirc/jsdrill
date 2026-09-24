@@ -1,14 +1,23 @@
 import { NextResponse } from "next/server";
 import { db, schema } from "@/lib/db";
-import { eq } from "drizzle-orm";
-import { moduleProgress, trackProgress, answeredToday, overdueCount } from "@/lib/progress";
+import { and, eq } from "drizzle-orm";
+import {
+  answeredToday,
+  currentStreak,
+  loadProgressContext,
+  moduleProgress,
+  overdueCount,
+  trackProgress,
+} from "@/lib/progress";
 import { parseIdeas, toItem } from "@/lib/sessionBuilder";
 import { isMastered } from "@/lib/fsrs";
+import { DEFAULT_USER_ID } from "@/lib/user";
+import { fail, ok, serverError } from "@/lib/api";
 
 /**
  * The roadmap. Without `track`, returns every track with its progress
  * plus the today-panel numbers. With `?track=<slug>`, returns that
- * track's modules and briefs.
+ * track's modules and briefs. With `?module=<slug>`, one module's page.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -28,45 +37,36 @@ export async function GET(request: Request) {
         .where(eq(schema.tracks.slug, slug))
         .get();
 
-      if (!track) {
-        return NextResponse.json(
-          { success: false, error: "Unknown track" },
-          { status: 404 }
-        );
-      }
+      if (!track) return fail("Unknown track", 404);
 
-      const progress = moduleProgress(track.id);
+      const ctx = loadProgressContext(DEFAULT_USER_ID);
+      const progress = moduleProgress(track.id, DEFAULT_USER_ID, ctx.cards);
+      const summary = trackProgress(DEFAULT_USER_ID, ctx).find((t) => t.trackId === track.id);
 
-      const summary = trackProgress().find((t) => t.trackId === track.id);
-
-      return NextResponse.json({
-        success: true,
-        data: { track, modules: progress, progress: summary },
-      });
+      return ok({ track, modules: progress, progress: summary });
     }
 
     const user = db
       .select()
       .from(schema.users)
-      .where(eq(schema.users.id, "default-user"))
+      .where(eq(schema.users.id, DEFAULT_USER_ID))
       .get();
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        tracks: trackProgress(),
-        today: {
-          answered: answeredToday(),
-          goal: user?.dailyGoal ?? 20,
-          due: overdueCount(),
-          streak: user?.streakCount ?? 0,
-          targetRole: user?.targetRole ?? "",
-        },
+    return ok({
+      tracks: trackProgress(),
+      today: {
+        answered: answeredToday(),
+        goal: user?.dailyGoal ?? 20,
+        due: overdueCount(),
+        // Computed live: the stored `streakCount` is only refreshed when
+        // an attempt is recorded, so after a missed day it would still
+        // show yesterday's streak.
+        streak: currentStreak(),
+        targetRole: user?.targetRole ?? "",
       },
     });
   } catch (error) {
-    console.error("Path failed:", error);
-    return NextResponse.json({ success: false, error: "Failed to load path" }, { status: 500 });
+    return serverError("Failed to load path", error);
   }
 }
 
@@ -85,19 +85,19 @@ function moduleDetail(moduleSlug: string) {
   const track = db.select().from(schema.tracks).where(eq(schema.tracks.id, mod.trackId)).get();
   if (!track) return { success: false as const, error: "Unknown track" };
 
-  const siblings = moduleProgress(track.id);
+  const { cards } = loadProgressContext(DEFAULT_USER_ID);
+  const siblings = moduleProgress(track.id, DEFAULT_USER_ID, cards);
   const index = siblings.findIndex((m) => m.moduleId === mod.id);
+  // Removed from content: its row survives for history, but it has no
+  // published items and is not part of the roadmap any more.
+  if (index === -1) return { success: false as const, error: "Unknown module" };
   const progress = siblings[index];
 
-  const items = db.select().from(schema.items).where(eq(schema.items.moduleId, mod.id)).all();
-  const cards = new Map(
-    db
-      .select()
-      .from(schema.userCards)
-      .where(eq(schema.userCards.userId, "default-user"))
-      .all()
-      .map((c) => [c.itemId, c])
-  );
+  const items = db
+    .select()
+    .from(schema.items)
+    .where(and(eq(schema.items.moduleId, mod.id), eq(schema.items.isPublished, true)))
+    .all();
 
   const nowIso = new Date().toISOString();
   const itemStatus = items
@@ -141,7 +141,7 @@ function moduleDetail(moduleSlug: string) {
       progress,
       items: itemStatus,
       prev: index > 0 ? siblings[index - 1] : null,
-      next: index >= 0 && index < siblings.length - 1 ? siblings[index + 1] : null,
+      next: index < siblings.length - 1 ? siblings[index + 1] : null,
     },
   };
 }

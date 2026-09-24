@@ -1,9 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { use, useEffect, useState } from "react";
-import { Badge, Button, Card, EmptyState, ProgressBar, Spinner } from "@/components/ui";
-import { LevelPips } from "../page";
+import { use } from "react";
+import { LevelPips } from "@/components/LevelPips";
+import { useApi } from "@/components/useApi";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  ErrorState,
+  LinkButton,
+  ProgressBar,
+  Spinner,
+} from "@/components/ui";
 import { LEVEL_META, LEVELS, type ModuleProgress, type Track, type TrackProgress } from "@/types";
 import { masteryLabel, tint } from "@/lib/utils";
 
@@ -15,29 +24,34 @@ type TrackDetail = {
 
 export default function TrackPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
-  const [data, setData] = useState<TrackDetail | null>(null);
-  const [notFound, setNotFound] = useState(false);
+  const { data, error, retry } = useApi<TrackDetail>(`/api/path?track=${encodeURIComponent(slug)}`);
 
-  useEffect(() => {
-    fetch(`/api/path?track=${slug}`)
-      .then((r) => r.json())
-      .then((json) => (json.success ? setData(json.data) : setNotFound(true)))
-      .catch(() => setNotFound(true));
-  }, [slug]);
-
-  if (notFound) {
+  if (error?.status === 404) {
     return (
       <Card padding="lg">
         <EmptyState
+          as="h1"
           title="Track not found"
           body="That track doesn't exist."
-          action={
-            <Link href="/app/path">
-              <Button>Back to roadmap</Button>
-            </Link>
-          }
+          action={<LinkButton href="/app/path">Back to roadmap</LinkButton>}
         />
       </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <ErrorState
+        as="h1"
+        title="Couldn’t load this track"
+        message={error.message}
+        onRetry={retry}
+        extra={
+          <LinkButton href="/app/path" variant="secondary">
+            Back to roadmap
+          </LinkButton>
+        }
+      />
     );
   }
 
@@ -63,6 +77,7 @@ export default function TrackPage({ params }: { params: Promise<{ slug: string }
       <Card raised padding="lg" accent={track.color}>
         <div className="flex items-start gap-4">
           <span
+            aria-hidden
             className="h-12 w-12 rounded-xl flex items-center justify-center text-[15px] font-bold flex-none"
             style={{ background: tint(track.color, 0.16), color: track.color }}
           >
@@ -103,14 +118,12 @@ export default function TrackPage({ params }: { params: Promise<{ slug: string }
             <Metric label="Seen" value={`${progress.seenItems}/${progress.totalItems}`} />
             <Metric label="Accuracy" value={progress.seenItems ? `${progress.accuracy}%` : "—"} />
 
-            <Link
+            <LinkButton
               href={`/app/drill?mode=track&trackId=${track.id}&size=12`}
-              className="ml-auto"
+              className="w-full sm:w-auto sm:ml-auto"
             >
-              <Button>
-                {progress.dueItems > 0 ? `Review ${progress.dueItems} due` : "Drill this track"}
-              </Button>
-            </Link>
+              {progress.dueItems > 0 ? `Review ${progress.dueItems} due` : "Drill this track"}
+            </LinkButton>
           </div>
         )}
       </Card>
@@ -118,7 +131,7 @@ export default function TrackPage({ params }: { params: Promise<{ slug: string }
       {/* ─── Modules by level ─── */}
       {byLevel.map((group) => (
         <section key={group.level}>
-          <div className="flex items-baseline gap-2.5 mb-3">
+          <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 mb-3">
             <span
               className="text-[11px] font-bold px-1.5 py-0.5 rounded"
               style={{ background: tint(track.color, 0.16), color: track.color }}
@@ -135,15 +148,19 @@ export default function TrackPage({ params }: { params: Promise<{ slug: string }
 
           <div className="flex flex-col gap-2.5">
             {group.modules.map((module) => (
-              <Link key={module.moduleId} href={`/app/path/${slug}/${module.moduleSlug}`}>
+              <Link
+                key={module.moduleId}
+                href={`/app/path/${slug}/${module.moduleSlug}`}
+                className="block rounded-xl"
+              >
                 <Card
                   className="transition-all duration-150 hover:-translate-y-0.5"
                   style={{ cursor: "pointer" }}
                 >
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[16px] font-medium" style={{ color: "var(--text)" }}>
+                    <h3 className="text-[16px] font-medium" style={{ color: "var(--text)" }}>
                       {module.title}
-                    </span>
+                    </h3>
                     {module.dueItems > 0 && <Badge tone="warn">{module.dueItems} due</Badge>}
                     {module.locked && <Badge>Ahead of your level</Badge>}
                   </div>

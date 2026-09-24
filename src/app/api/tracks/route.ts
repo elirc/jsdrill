@@ -1,14 +1,10 @@
-import { NextResponse } from "next/server";
 import { trackProgress } from "@/lib/progress";
+import { ok, serverError } from "@/lib/api";
 
 export async function GET() {
   try {
-    return NextResponse.json({ success: true, data: trackProgress() });
+    return ok(trackProgress());
   } catch (error) {
-    console.error("Tracks failed:", error);
-    return NextResponse.json(
-      { success: false, error: "Failed to load tracks" },
-      { status: 500 }
-    );
+    return serverError("Failed to load tracks", error);
   }
 }

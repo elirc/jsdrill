@@ -192,6 +192,58 @@ public void Applies_discount(decimal price, string? code, decimal expected) =>
             { t: "`[Repeat]`", why: "No such xUnit attribute." },
           ],
         }),
+        mcq("test-unit-doubles", {
+          q: "Which set of definitions for test doubles is correct?",
+          why: "The terms come from Gerard Meszaros's *xUnit Test Patterns*, popularised by Martin Fowler:\n\n- A **stub** returns canned answers so the code under test can proceed — `getUser` always returns this user. You assert on the *result*, not on the stub.\n- A **mock** is pre-programmed with expectations and **verifies interactions** — 'was `sendEmail` called once with this address?'.\n- A **fake** is a **working, simplified implementation** — an in-memory repository, SQLite instead of the production database.\n- A **spy** **records how it was called** so you can inspect it afterwards, and may wrap a real implementation.\n\nIn day-to-day tooling the lines blur: `vi.fn()`, `jest.fn()` and Moq's `Mock<T>` can act as a stub, spy or mock depending on how you use them, and people say 'mock' for all of them. The distinction still matters for design: asserting on interactions (mocks) couples tests to implementation, so prefer asserting on outcomes with stubs and fakes where you can.",
+          tip: "Give the definitions, then add 'prefer state verification over interaction verification' — that is the senior part.",
+          c: ["mocking", "testing"],
+          d: 2,
+          choices: [
+            {
+              t: "Stub: canned answers. Mock: verifies expected calls. Fake: working lightweight implementation. Spy: records calls for later inspection.",
+              ok: true,
+              why: "Correct — the standard Meszaros / Fowler vocabulary.",
+            },
+            {
+              t: "Stub: verifies calls. Mock: canned answers. Fake: records calls. Spy: in-memory implementation.",
+              why: "Every pair is swapped; stubs answer, mocks verify.",
+            },
+            {
+              t: "They are four names for exactly the same thing",
+              why: "Tools blur them, but the concepts differ in whether they answer, verify, implement or record.",
+            },
+            {
+              t: "Fake: a double that always throws, to test error paths",
+              why: "A fake is a working implementation. A throwing stub is still a stub.",
+            },
+          ],
+        }),
+        mcq("test-unit-time", {
+          q: "You need to test that a session expires 15 minutes after login. What is the right approach?",
+          why: "**Control the clock.** Code that reads the current time directly — `DateTime.UtcNow`, `Date.now()` — is untestable without waiting, so make time a dependency the test can set.\n\nIn .NET 8 and later, inject **`TimeProvider`** and call `GetUtcNow()`; tests use `FakeTimeProvider` (from `Microsoft.Extensions.TimeProvider.Testing`) and call `Advance(TimeSpan.FromMinutes(15))`. Before .NET 8, the same idea was a small hand-written `IClock` interface. In Vitest or Jest, `vi.useFakeTimers()` plus `vi.setSystemTime(...)` and `vi.advanceTimersByTime(...)` replace both the clock and pending timers.\n\nThe test then runs in milliseconds, is fully deterministic, and can check the boundary precisely: valid at 14:59, expired at 15:00.\n\n`Thread.Sleep` or a real 15-minute wait makes the suite slow, and short real sleeps create flaky tests that fail on a busy CI machine.",
+          tip: "Naming `TimeProvider` shows you are current with .NET 8.",
+          c: ["mocking", "testing"],
+          d: 2,
+          choices: [
+            {
+              t: "Inject a clock (`TimeProvider` / fake timers) and advance it in the test",
+              ok: true,
+              why: "Correct — fast, deterministic, and you can test the exact boundary.",
+            },
+            {
+              t: "Sleep for 15 minutes in the test",
+              why: "Correct in principle but makes the suite unusably slow.",
+            },
+            {
+              t: "Temporarily set the expiry to one second and sleep for two",
+              why: "You are no longer testing the real configuration, and real sleeps are flaky under load.",
+            },
+            {
+              t: "Change the machine's system clock during the test",
+              why: "Affects everything else running, needs privileges, and breaks parallel tests.",
+            },
+          ],
+        }),
       ],
     }),
 

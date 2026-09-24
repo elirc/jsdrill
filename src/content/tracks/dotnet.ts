@@ -130,6 +130,58 @@ app.Run();`,
           c: ["runtime", "deployment"],
           d: 1,
         }),
+        mcq("net-intro-lineage", {
+          q: "A job ad asks for '.NET Core experience' and the team runs .NET 8. How do .NET Framework, .NET Core and .NET 8 relate?",
+          why: "**.NET Framework** (up to 4.8.x) is the original, Windows-only runtime and is now maintenance-only. **.NET Core** (1.0 to 3.1) was the cross-platform, open-source rewrite. **.NET 5** dropped the word 'Core' and became the single unified line, so .NET 6, 7, 8 and 9 are the direct continuation of .NET Core.\n\nSo '.NET Core experience' and '.NET 8 experience' mean essentially the same stack; '.NET Framework' means a legacy codebase — often ASP.NET MVC 5, Web Forms or WCF on IIS — that cannot simply be retargeted.\n\nOne naming wrinkle survives: the web framework is still called **ASP.NET Core** and the ORM **EF Core**, even on .NET 8.\n\nEven-numbered releases (6, 8, 10) are **LTS** with three years of support; odd-numbered ones are shorter-lived STS releases. Teams usually standardise on the LTS line.",
+          tip: "Saying '.NET 5 unified the line; Framework is the Windows-only legacy one' in one breath shows you know which world a codebase lives in.",
+          c: ["runtime", "deployment"],
+          d: 1,
+          choices: [
+            {
+              t: ".NET 5+ is the continuation of .NET Core; .NET Framework is the separate, Windows-only legacy runtime",
+              ok: true,
+              why: "Correct — 'Core' was dropped from the name at version 5, and Framework stopped at 4.8.",
+            },
+            {
+              t: ".NET 8 is the next version of .NET Framework 4.8",
+              why: "Framework ends at 4.8.x. .NET 5+ descends from .NET Core, which is why porting a Framework app is real work.",
+            },
+            {
+              t: ".NET Core is a lightweight subset for microservices; full apps still need .NET Framework",
+              why: "That was a common perception around .NET Core 1.x. Modern .NET is the full, recommended platform for new work of any size.",
+            },
+            {
+              t: "They are interchangeable: any .NET Framework app runs unchanged on .NET 8",
+              why: "Some libraries do load, but `System.Web`, Web Forms and WCF server hosting do not exist on modern .NET.",
+            },
+          ],
+        }),
+        mcq("net-intro-publish", {
+          q: "What is the difference between a framework-dependent and a self-contained `dotnet publish`?",
+          why: "A **framework-dependent** publish ships only your app's DLLs and expects the matching .NET runtime to be installed on the target. The output is small, and the runtime can be patched independently by whoever manages the host.\n\nA **self-contained** publish (`--self-contained` with a runtime identifier such as `-r linux-x64`) bundles the .NET runtime into the output. The target needs no .NET install and you control the exact runtime version, but the output is much larger and runtime security patches only arrive when **you** rebuild and redeploy.\n\nIn containers the distinction matters less: the usual pattern is framework-dependent on an `aspnet` base image, which already contains the runtime. Single-file publish and trimming are further options layered on top.",
+          tip: "Mention the patching trade-off — it is the part people forget.",
+          c: ["deployment", "runtime"],
+          d: 2,
+          choices: [
+            {
+              t: "Framework-dependent needs the .NET runtime installed on the host; self-contained bundles the runtime into the output",
+              ok: true,
+              why: "Correct — small and centrally patched versus large and independent of the host.",
+            },
+            {
+              t: "Self-contained compiles C# to native machine code with no runtime at all",
+              why: "That describes Native AOT, a separate option. A self-contained app still runs on the bundled runtime with JIT compilation.",
+            },
+            {
+              t: "Framework-dependent apps only run on Windows",
+              why: "They run anywhere the matching runtime is installed, including Linux and macOS.",
+            },
+            {
+              t: "Self-contained apps receive runtime security patches automatically",
+              why: "The opposite — the runtime is baked into your output, so you must rebuild and redeploy to pick up a patch.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -220,6 +272,58 @@ ASP.NET Core's default container validates this in Development and throws at sta
           why: "`AddScoped<IOrderService, OrderService>()` maps the interface to the implementation with a per-request lifetime. Consumers ask for `IOrderService` and never mention `OrderService` — which is what makes substitution possible in tests.\n\nScoped is the right default for a service that uses a `DbContext`, because everything in the request then shares the same context and therefore the same unit of work.",
           c: ["dependency-injection", "service-lifetimes"],
           d: 2,
+        }),
+        mcq("net-di-httpclient", {
+          q: "A service does `using var client = new HttpClient();` on every call. Under load, outbound calls start failing. Why, and what is the fix?",
+          why: "**Socket exhaustion.** Disposing an `HttpClient` closes its connection, but the operating system keeps each closed TCP socket in `TIME_WAIT` for a while. Create and dispose a client per request under load and you run out of available ports, so new connections fail — and you pay a fresh DNS lookup and TLS handshake every time as well.\n\nThe fix is to reuse connections. In ASP.NET Core that usually means **`IHttpClientFactory`**: register with `builder.Services.AddHttpClient<PaymentsClient>(...)` and inject the typed client. The factory pools the underlying handlers (and their connections) and recycles them periodically, which also avoids the opposite bug — a single static `HttpClient` living forever and never noticing a DNS change.\n\nA long-lived `HttpClient` built on a `SocketsHttpHandler` with `PooledConnectionLifetime` set is the other valid answer, common outside ASP.NET Core.",
+          tip: "Name both failure modes — per-request exhaustion and the stale-DNS static client — and say the factory solves both.",
+          c: ["dependency-injection", "performance", "runtime"],
+          d: 2,
+          choices: [
+            {
+              t: "Each disposed client leaves sockets in `TIME_WAIT`, exhausting ports; use `IHttpClientFactory` so connections are pooled",
+              ok: true,
+              why: "Correct — reuse the handlers rather than burning a port per call.",
+            },
+            {
+              t: "`HttpClient` is not thread-safe, so the fix is a lock around each call",
+              why: "Its request methods are safe to call concurrently; sharing one is the recommended pattern, and a lock would just serialise traffic.",
+            },
+            {
+              t: "The `using` is missing a call to `Close()`, so connections leak",
+              why: "Disposal is exactly what closes the connection — and that is what creates the `TIME_WAIT` sockets.",
+            },
+            {
+              t: "Register `HttpClient` as scoped so each request gets a fresh one",
+              why: "That is the same create-per-request pattern, just routed through DI.",
+            },
+          ],
+        }),
+        mcq("net-di-hosted", {
+          q: "You need a queue consumer that runs for the whole lifetime of the API process. What is the idiomatic ASP.NET Core approach?",
+          why: "Derive from **`BackgroundService`** (a base class implementing `IHostedService`), put the loop in `ExecuteAsync(CancellationToken stoppingToken)`, and register it with `builder.Services.AddHostedService<QueueConsumer>()`. The host starts it with the app and signals the token on shutdown, so the loop can finish its current message and exit cleanly.\n\nThe trap: hosted services are effectively **singletons**. Injecting a scoped `DbContext` directly is a captive dependency — inject `IServiceScopeFactory` and create a scope per message instead.\n\nAlso worth knowing: since .NET 6, an unhandled exception escaping `ExecuteAsync` stops the host by default, so catch and log per-message failures inside the loop. For heavy or independently scaled work, a separate worker process running the same `BackgroundService` is often better than sharing the API's process.",
+          tip: "Follow up unprompted with 'and it is a singleton, so I create a scope per message' — that is the senior detail.",
+          c: ["dependency-injection", "service-lifetimes", "concurrency"],
+          d: 2,
+          choices: [
+            {
+              t: "A `BackgroundService` registered with `AddHostedService`, creating a DI scope per message",
+              ok: true,
+              why: "Correct — host-managed lifetime, cancellation on shutdown, and no captive `DbContext`.",
+            },
+            {
+              t: "`Task.Run` an infinite loop from `Program.cs` after `app.Run()`",
+              why: "`app.Run()` blocks until shutdown, so the loop would only start once the app is shutting down — and a fire-and-forget task gets no cancellation or clean shutdown anyway.",
+            },
+            {
+              t: "A controller action the client calls once to start the loop",
+              why: "The host knows nothing about that loop — no graceful shutdown, no restart — and any scoped services it captured, such as a `DbContext`, are disposed when the request ends.",
+            },
+            {
+              t: "A scoped service that starts a timer in its constructor",
+              why: "Scoped services are created per request and disposed at its end, so the timer's owner disappears.",
+            },
+          ],
         }),
       ],
     }),
@@ -341,6 +445,91 @@ Not calling \`next\` short-circuits the pipeline — which is exactly how author
             { t: "Setting `AllowAnyOrigin` with `AllowCredentials` is the standard fix", why: "That combination is explicitly disallowed." },
           ],
         }),
+        mcq("net-pipe-next", {
+          q: "In this inline middleware, when does the `Stopwatch` line after `await next(context)` run?",
+          code: `app.Use(async (context, next) =>
+{
+    var sw = Stopwatch.StartNew();
+    await next(context);
+    logger.LogInformation("Took {Ms}ms", sw.ElapsedMilliseconds);
+});`,
+          lang: "csharp",
+          why: "**After everything downstream has finished** — the rest of the middleware, routing, and the endpoint itself. Middleware is a chain of delegates: `next` is simply the next component in the pipeline, and awaiting it runs the entire remainder of the pipeline before control returns to you.\n\nThat gives every middleware two halves: code before `next` runs on the way **in** (inspect or reject the request), code after runs on the way **out** (observe the result, time it, log it). The request goes through the components in registration order and the response unwinds through them in reverse — which is why the first middleware registered sees the whole request's duration.\n\nOne caution for the 'after' half: by then the response may already have started streaming to the client, so you can read `context.Response.StatusCode` but should not try to change headers.",
+          tip: "Describe middleware as 'a Russian doll of delegates' — before `next` is the way in, after is the way out.",
+          c: ["middleware"],
+          d: 1,
+          choices: [
+            {
+              t: "After the rest of the pipeline, including the endpoint, has completed",
+              ok: true,
+              why: "Correct — awaiting `next` runs everything downstream first.",
+            },
+            {
+              t: "Immediately, in parallel with the endpoint",
+              why: "It is awaited, so execution continues only when the downstream work completes.",
+            },
+            {
+              t: "Only if a later middleware short-circuits",
+              why: "It runs whenever `next` returns, whether the endpoint or an earlier short-circuit produced the response.",
+            },
+            {
+              t: "Never — code after `next` is ignored",
+              why: "The after-`next` half is how logging, timing and response-inspection middleware work.",
+            },
+          ],
+        }),
+        mcq("net-pipe-policies", {
+          q: "Why prefer `[Authorize(Policy = \"CanRefundOrders\")]` over `[Authorize(Roles = \"Admin,Support\")]`?",
+          why: "A **policy** names a *permission* and keeps the rule for it in one place; a **role list** scatters the rule across every attribute that repeats it.\n\nYou register the policy once in `AddAuthorization(o => o.AddPolicy(\"CanRefundOrders\", p => p.RequireRole(\"Admin\", \"Support\")))` — or require a claim, or write a custom `IAuthorizationRequirement` with a handler for anything richer. If Support later loses refund rights, you change one registration rather than hunting through every controller.\n\nRoles are not wrong — role checks are themselves just one kind of policy requirement. The point is that endpoints should ask 'can this user do X?', not 'is this user one of these job titles?'.\n\nResource-based checks such as 'is this *your* order?' need the resource itself, so they go through `IAuthorizationService.AuthorizeAsync(user, order, policy)` inside the action rather than an attribute.",
+          tip: "Mentioning resource-based authorization for ownership checks is the step beyond most answers.",
+          c: ["auth", "security"],
+          d: 2,
+          choices: [
+            {
+              t: "The policy names a permission defined once, so changing who may refund is one edit rather than many",
+              ok: true,
+              why: "Correct — centralised rules, and endpoints express intent.",
+            },
+            {
+              t: "Role checks are not enforced when using JWT bearer tokens",
+              why: "Roles work fine from token claims, provided the role claim type is mapped correctly.",
+            },
+            {
+              t: "Policies are evaluated in the database, so they are always up to date",
+              why: "Policies are evaluated in-process against the user's claims; no database is involved unless your handler queries one.",
+            },
+            {
+              t: "Policies skip authentication, so they are faster",
+              why: "Policies still evaluate against an authenticated `HttpContext.User`.",
+            },
+          ],
+        }),
+        mcq("net-pipe-jwt", {
+          q: "An API is configured with `AddAuthentication().AddJwtBearer(...)`. What does it do with the bearer token on each request?",
+          why: "It **validates the token locally**: checks the signature against the issuer's signing keys, then the issuer (`iss`), audience (`aud`) and expiry (`exp`). If everything passes it builds a `ClaimsPrincipal` from the token's claims and puts it on `HttpContext.User`.\n\nThe important part is what it does **not** do: it does not call the identity provider or a database per request. The signing keys are fetched from the provider's metadata document (when you configure an `Authority`) and cached. That is why JWTs scale well — and also why they cannot be revoked instantly: a stolen token stays valid until it expires, so access tokens are kept short-lived and paired with refresh tokens.\n\nThe API never issues tokens here; that is the identity provider's job.",
+          tip: "Connect local validation to the revocation trade-off — that is what shows you understand JWTs rather than just configuring them.",
+          c: ["auth", "security", "middleware"],
+          d: 2,
+          choices: [
+            {
+              t: "Validates signature, issuer, audience and expiry locally, then builds `HttpContext.User` from the claims",
+              ok: true,
+              why: "Correct — no per-request round trip, which is both the benefit and the revocation problem.",
+            },
+            {
+              t: "Sends the token to the identity provider on every request to check it is still valid",
+              why: "That is token introspection, used with opaque tokens. JWT bearer validation is local, with cached signing keys.",
+            },
+            {
+              t: "Decrypts the token to read the user's password hash",
+              why: "A standard JWT is signed, not encrypted — its payload is merely Base64URL-encoded and readable by anyone — and it never contains a password.",
+            },
+            {
+              t: "Looks the token up in a sessions table",
+              why: "That is how opaque session ids work. A JWT is self-contained, which is the point of the format.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -445,6 +634,46 @@ public async Task<{{1}}<OrderDto>> Get(Guid id)
           why: "`ActionResult<OrderDto>` permits both branches from one method. `NotFound()` produces a `404` — the correct status for a resource that does not exist, as opposed to `400` (malformed request) or `204` (success with no content).\n\nNote also `{id:guid}` in the route: a **route constraint** means a non-GUID path segment fails to match the route at all and returns 404 automatically, rather than reaching your action with a binding failure.",
           c: ["rest", "http-semantics"],
           d: 2,
+        }),
+        multi("net-api-binding-sources", {
+          q: "In an `[ApiController]`, which statements about binding sources are correct?",
+          why: "Correct: a parameter named like a route template segment (`{id}`) binds **from the route**; `[FromQuery]` reads the **query string**; and an action can have only **one** body-bound parameter, because the request body is a single stream read once.\n\nWith `[ApiController]`, the defaults are inferred: complex types come from the body (except types registered in DI, which .NET 7+ infers as services, and `IFormFile`, which comes from the form), simple types come from the route if a matching segment exists and otherwise from the query string. You add explicit attributes when you want to override that — `[FromHeader]` for a header value, `[FromQuery]` on a complex type to bind a filter object from query parameters.\n\nNot correct: form fields are `[FromForm]`, not `[FromBody]` — `[FromBody]` uses an input formatter (JSON by default). And simple types such as `int` and `string` are not read from the body by default.",
+          tip: "The 'only one `[FromBody]`' rule is a quick signal that you know the body is a stream, not a dictionary.",
+          c: ["rest", "validation"],
+          d: 2,
+          choices: [
+            { t: "An `id` parameter matching a `{id}` route segment binds from the route", ok: true },
+            { t: "`[FromQuery]` reads values from the query string, e.g. `?page=2`", ok: true },
+            { t: "An action can have at most one parameter bound from the body", ok: true },
+            { t: "`[FromBody]` is how you read HTML form fields", why: "Form posts use `[FromForm]`; `[FromBody]` runs an input formatter such as the JSON one." },
+            { t: "Simple types like `int` are read from the JSON body by default", why: "Simple types are inferred from route or query; only complex types default to the body." },
+          ],
+        }),
+        mcq("net-api-minimal", {
+          q: "Which is an accurate comparison of Minimal APIs and controllers in modern ASP.NET Core?",
+          why: "**Both are first-class and production-ready**; they sit on the same routing, DI, authentication and authorization foundations. (Parameter binding looks similar but is a separate implementation — minimal APIs have no `ModelState` or MVC model binders.) The choice is about how you want to organise code, not about capability.\n\nMinimal APIs (`app.MapGet(\"/orders/{id}\", ...)`) have less ceremony and slightly lower overhead, and they organise well with **route groups** (`app.MapGroup(\"/orders\")`) and **endpoint filters**. They are also the path that supports Native AOT. Controllers group related actions into classes and bring the MVC feature set — action filters, conventions, model-binding customisation — that large existing codebases lean on.\n\nA reasonable rule: new small-to-medium services often start minimal; a large codebase already built on controllers usually stays consistent. Mixing both in one app is allowed.",
+          tip: "Avoid 'minimal APIs are for prototypes' — that was the framing in .NET 6 and interviewers notice it is out of date.",
+          c: ["rest", "middleware"],
+          d: 2,
+          choices: [
+            {
+              t: "Both are production-ready on the same routing and DI; minimal APIs trade MVC conventions for less ceremony",
+              ok: true,
+              why: "Correct — it is an organisational choice, and they can coexist.",
+            },
+            {
+              t: "Minimal APIs are for prototypes and should be rewritten as controllers before production",
+              why: "An early perception; route groups, filters, validation and OpenAPI support make them a full option.",
+            },
+            {
+              t: "Minimal APIs cannot use dependency injection",
+              why: "Services are injected as handler parameters, e.g. `(int id, IOrderService svc) => ...`.",
+            },
+            {
+              t: "Controllers are deprecated in .NET 8",
+              why: "Controllers are fully supported and remain the most common style in existing codebases.",
+            },
+          ],
         }),
       ],
     }),
@@ -557,6 +786,66 @@ return orders.Select(o => new { o.Id, Customer = o.Customer.Name });`,
           d: 3,
           secs: 180,
         }),
+        mcq("net-ef-codefirst", {
+          q: "What is the difference between Code-First and Database-First in EF Core?",
+          why: "It is about **which side is the source of truth**. In **Code-First**, your C# entity classes and `DbContext` configuration define the schema, and **migrations** generate the database changes from them. In **Database-First**, the database already exists (often owned by a DBA or shared with other systems) and you **scaffold** entity classes from it with `dotnet ef dbcontext scaffold`, re-running the scaffold when the schema changes.\n\nCode-First suits greenfield apps where the application owns its database. Database-First suits legacy or shared databases where schema changes happen outside your code.\n\nEF Core has no EDMX designer file — that was classic EF6. In Core, 'Database-First' simply means reverse-engineering code from an existing schema.",
+          tip: "Say which you would choose and why — 'we own the database, so Code-First with reviewed migrations' is a complete answer.",
+          c: ["orm", "schema-design"],
+          d: 1,
+          choices: [
+            {
+              t: "Code-First generates the schema from your classes via migrations; Database-First scaffolds classes from an existing schema",
+              ok: true,
+              why: "Correct — the difference is which side is authoritative.",
+            },
+            {
+              t: "Code-First writes SQL by hand; Database-First uses LINQ",
+              why: "Both query with LINQ. The difference is where the schema is defined.",
+            },
+            {
+              t: "Database-First is faster at runtime because the SQL is precompiled",
+              why: "Runtime query behaviour is identical; only the modelling workflow differs.",
+            },
+            {
+              t: "Database-First requires an EDMX designer file",
+              why: "EDMX belonged to EF6. EF Core scaffolds plain classes.",
+            },
+          ],
+        }),
+        mcq("net-ef-update-attach", {
+          q: "A `PUT` handler maps the request to a new `Order` entity (with its existing id) and calls `db.Orders.Update(order); await db.SaveChangesAsync();` on a fresh context. What happens?",
+          why: "EF issues an **`UPDATE` that sets every column** of that row, without loading it first. `Update` begins tracking the entity in the **Modified** state with *all* properties marked modified, because a fresh context has no original values to compare against.\n\nThat is right for a genuine full replacement, and it saves a round trip. The risk is that any property the client did not send is written with its default value — a `null` or `0` silently overwrites real data. `Update` also walks the navigation graph: related entities with a key set are marked Modified, those without are marked Added.\n\nThe alternatives: **load then modify** (`FindAsync`, copy the fields, save) so EF's change tracker emits only the changed columns — the safest default. Or `Attach` the entity (tracked as **Unchanged**) and mark specific properties modified with `db.Entry(order).Property(o => o.Status).IsModified = true` for a targeted partial update.",
+          tip: "Contrasting `Update` (all columns) with `Attach` plus `IsModified` (chosen columns) shows real EF experience.",
+          c: ["orm", "rest"],
+          d: 3,
+          choices: [
+            {
+              t: "EF marks every property modified and sends an `UPDATE` of all columns, without reading the row first",
+              ok: true,
+              why: "Correct — fine for full replacement, dangerous if the DTO was partial.",
+            },
+            {
+              t: "EF first `SELECT`s the row, then updates only the changed columns",
+              why: "That happens only if you load the entity yourself; `Update` on a detached entity has no original values to diff.",
+            },
+            {
+              t: "Nothing — `SaveChanges` ignores entities not loaded by this context",
+              why: "`Update` starts tracking the entity, so it is saved. Merely constructing it without `Update` or `Attach` would be ignored.",
+            },
+            {
+              t: "EF inserts a duplicate row because the entity is new",
+              why: "An entity with a key value set is treated as existing by `Update`; `Add` would attempt the insert.",
+            },
+          ],
+        }),
+        tf("net-ef-pooling", {
+          q: "With `AddDbContextPool`, one `DbContext` instance can be shared by two requests at the same time.",
+          answer: false,
+          why: "False. Pooling reuses instances **sequentially**, never concurrently. When a request's scope ends, the context is reset (its change tracker cleared) and returned to the pool; the next request leases it exclusively. That saves the cost of constructing and configuring a context per request, which matters in very high-throughput services.\n\nThe constraint pooling adds: because the same instance outlives a single request, it must not hold per-request state of its own — for example a tenant id captured in a field in the constructor would leak into the next request. That is why pooled contexts should get their dependencies through `DbContextOptions` rather than injecting other scoped services.\n\nThread-safety is unchanged either way: a single `DbContext` still supports only one operation at a time.",
+          tip: "Most apps do not need pooling — say you would measure before enabling it.",
+          c: ["orm", "service-lifetimes", "performance"],
+          d: 3,
+        }),
       ],
     }),
 
@@ -639,6 +928,58 @@ So an environment variable overrides \`appsettings.json\` — which is exactly h
             { t: "It encrypts the configuration values", why: "Encryption is the secret store's job." },
             { t: "It reloads settings automatically in every case", why: "Only `IOptionsSnapshot`/`IOptionsMonitor` do." },
             { t: "It is required for `appsettings.json` to be read", why: "`IConfiguration` reads it regardless." },
+          ],
+        }),
+        mcq("net-prod-structured-logging", {
+          q: "Why write `logger.LogInformation(\"Order {OrderId} placed\", orderId)` instead of using string interpolation?",
+          why: "Because `{OrderId}` is a **named property**, not just text. With a message template, the logging pipeline keeps `OrderId` as a separate, typed field alongside the rendered message, so a structured sink (Seq, Application Insights, Elasticsearch, Datadog) lets you query `OrderId = 1234` across millions of entries. Interpolation bakes the value into an opaque string, and every message becomes unique, which also defeats grouping by template.\n\nThere is a performance angle too: with a template, formatting is deferred until the log level is known to be enabled, while an interpolated string is built on every call even if Debug logging is off.\n\n`ILogger<T>` itself comes from DI, and `T` becomes the log **category** (usually the class name), which is what you filter on in configuration — for example raising `Microsoft.EntityFrameworkCore` to `Warning` while keeping your own code at `Information`.",
+          tip: "The phrase 'message template, not string interpolation' is exactly what reviewers look for.",
+          c: ["logging", "performance"],
+          d: 2,
+          choices: [
+            {
+              t: "The template keeps `OrderId` as a queryable property, and formatting is skipped when the level is disabled",
+              ok: true,
+              why: "Correct — structured data plus deferred formatting.",
+            },
+            {
+              t: "Interpolated strings cannot be logged by `ILogger`",
+              why: "They can; they just arrive as plain text with no properties.",
+            },
+            {
+              t: "Templates encrypt sensitive values such as ids",
+              why: "Nothing is encrypted. Do not log secrets or personal data either way.",
+            },
+            {
+              t: "It is purely a style preference with identical output in every sink",
+              why: "A structured sink stores the properties separately; that is the entire point.",
+            },
+          ],
+        }),
+        mcq("net-prod-cache", {
+          q: "An API runs as three instances behind a load balancer and caches product data with `IMemoryCache`. What problem should you expect?",
+          why: "**Each instance has its own cache.** `IMemoryCache` lives in the process's memory, so the three instances hold three independent copies. When a product changes and one instance evicts its entry, the other two keep serving the old value until their entries expire — users see different data depending on which instance handles them. Every restart or new instance also starts cold.\n\n`IDistributedCache` (typically backed by Redis) is shared by all instances, survives restarts, and invalidation happens in one place. The cost is a network hop and serialisation for every read.\n\nThe usual compromise is layered: a short-lived in-memory cache in front of a distributed one. `HybridCache` (the `Microsoft.Extensions.Caching.Hybrid` package, announced alongside .NET 9 and generally available since early 2025) packages that pattern along with protection against many requests recomputing the same missing entry at once.",
+          tip: "Name the trade-off both ways: memory cache is fastest but per-process; distributed is consistent but a network call.",
+          c: ["performance", "deployment"],
+          d: 2,
+          choices: [
+            {
+              t: "Instances hold independent caches, so after an update they can serve different, stale values",
+              ok: true,
+              why: "Correct — in-memory caching is per process.",
+            },
+            {
+              t: "`IMemoryCache` is shared across instances automatically by the load balancer",
+              why: "Load balancers route requests; they do not share process memory.",
+            },
+            {
+              t: "`IMemoryCache` persists to disk, so it fills the container's storage",
+              why: "It is purely in-memory and lost on restart.",
+            },
+            {
+              t: "`IMemoryCache` is not thread-safe, so concurrent requests corrupt it",
+              why: "The default `MemoryCache` is thread-safe; the problem is consistency across processes, not within one.",
+            },
           ],
         }),
       ],

@@ -187,6 +187,58 @@ The widely-used rule: **rebase your own local feature branch to keep it current;
           c: ["git", "security"],
           d: 2,
         }),
+        mcq("git-cherry-pick", {
+          q: "A bug fix was merged to `main`, but you also need it on the `release/2.3` branch without bringing the rest of `main`. What do you use?",
+          why: "**`git cherry-pick <commit>`** while on `release/2.3`. It takes the changes introduced by that one commit and applies them as a **new commit** on the current branch — same diff and message, but a different hash, because its parent differs.\n\nThat is exactly the hotfix-backport case. Things to know: if the fix spanned several commits you pick them all, in order (or a range); conflicts are resolved like a merge conflict followed by `git cherry-pick --continue`; and `-x` appends '(cherry picked from commit ...)' to the message so the history records where it came from.\n\nThe caveat is that the two copies are unrelated commits as far as Git is concerned. Heavy cherry-picking between long-lived branches duplicates history and can cause confusing conflicts later, so it suits targeted fixes, not a way of keeping branches in sync.",
+          tip: "Mentioning `-x` and 'new hash' shows you have actually backported a fix.",
+          c: ["git"],
+          d: 1,
+          choices: [
+            {
+              t: "`git cherry-pick` the fix commit onto the release branch",
+              ok: true,
+              why: "Correct — it copies one commit's changes as a new commit.",
+            },
+            {
+              t: "`git merge main` into the release branch",
+              why: "That brings every commit on `main`, not just the fix.",
+            },
+            {
+              t: "`git rebase main` on the release branch",
+              why: "That replays the release branch onto `main`, pulling in all of `main`'s history.",
+            },
+            {
+              t: "`git revert` the fix on `main`, then merge",
+              why: "Revert undoes a commit; it does not move one between branches.",
+            },
+          ],
+        }),
+        mcq("git-bisect", {
+          q: "A test passed at the `v1.8` tag and fails now, 400 commits later. What does `git bisect` do?",
+          why: "It **binary-searches the history** to find the first commit that introduced the failure. You mark one known-bad commit (`git bisect bad`) and one known-good one (`git bisect good v1.8`); Git checks out the midpoint, you test it and mark it good or bad, and it halves the range each time. 400 commits need only about **9 steps**, because 2 to the power of 9 is 512.\n\nIt becomes even better automated: `git bisect run npm test -- orders` runs the command at each step and uses its exit code (0 = good, 125 = skip this commit, other codes from 1 to 127 = bad), so Git finds the culprit unattended. `git bisect reset` returns you to where you started.\n\nThis is also an argument for small, focused commits that each build and pass tests — bisecting lands you on the exact change, and a small commit makes the cause obvious.",
+          tip: "Say 'binary search, about log2 of n steps, and `bisect run` automates it' — that is the full answer.",
+          c: ["git", "testing"],
+          d: 2,
+          choices: [
+            {
+              t: "Binary-searches the commits between good and bad to find the one that introduced the bug",
+              ok: true,
+              why: "Correct — about 9 steps for 400 commits.",
+            },
+            {
+              t: "Splits a large commit into two smaller ones",
+              why: "That is done with an interactive rebase or `git reset` followed by partial commits.",
+            },
+            {
+              t: "Shows who last modified each line of a file",
+              why: "That is `git blame`.",
+            },
+            {
+              t: "Automatically reverts every commit since the good tag",
+              why: "Bisect only checks out commits for you to test; it changes nothing permanently.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -381,6 +433,32 @@ Never combine a destructive schema change with the deploy that needs it. If the 
           c: ["deployment", "testing", "git"],
           d: 3,
           secs: 190,
+        }),
+        mcq("deploy-image-container", {
+          q: "What is the difference between a Docker image and a container?",
+          why: "An **image** is an immutable, layered template — your app, its runtime and dependencies, built from a `Dockerfile` and pushed to a registry. A **container** is a **running (or stopped) instance** of an image, with its own process, network and a thin **writable layer** on top of the read-only image layers.\n\nThe analogy that lands in interviews: an image is to a container what a class is to an object. One image can run as many containers at once, which is exactly how a service scales horizontally.\n\nThe consequence people forget: anything a container writes to its own filesystem lives in that writable layer and is **lost when the container is removed**. Data that must survive — database files, uploads — belongs in a **volume** or an external service. This is also why containers are treated as disposable: you never patch a running one, you build a new image and replace it.",
+          tip: "Use the class/object analogy, then add 'writes are lost unless you use a volume'.",
+          c: ["deployment", "tooling"],
+          d: 1,
+          choices: [
+            {
+              t: "An image is an immutable template; a container is a running instance of it with a writable layer",
+              ok: true,
+              why: "Correct — class versus object.",
+            },
+            {
+              t: "A container is a compressed image stored in a registry",
+              why: "Registries store images; containers exist only where they run.",
+            },
+            {
+              t: "An image is a full virtual machine including its own kernel",
+              why: "Containers share the host's kernel; that is why they start in seconds.",
+            },
+            {
+              t: "Changes made inside a running container are saved back into its image automatically",
+              why: "Images are immutable; container writes stay in its own layer and vanish when it is removed.",
+            },
+          ],
         }),
       ],
     }),

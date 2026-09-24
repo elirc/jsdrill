@@ -94,6 +94,32 @@ WHERE total > 100;`,
             { t: "A UNIQUE column allows only one NULL", why: "Most databases allow many — two unknowns are not equal." },
           ],
         }),
+        mcq("sql-q-delete-truncate", {
+          q: "Which correctly contrasts `DELETE`, `TRUNCATE` and `DROP`?",
+          why: "**`DELETE` removes rows, `TRUNCATE` removes all rows at once, `DROP` removes the table itself.**\n\n`DELETE FROM orders WHERE ...` works row by row: it accepts a `WHERE` clause, logs each row, fires `DELETE` triggers, and leaves identity counters alone. It is the only one of the three for removing *some* rows.\n\n`TRUNCATE TABLE orders` empties the whole table by deallocating its data pages, which makes it much faster on large tables and lighter on the log. It takes no `WHERE`, does not fire row triggers, and in SQL Server resets the identity seed. It is also blocked when another table references this one with a foreign key.\n\n`DROP TABLE orders` removes the rows *and* the definition — columns, indexes, constraints, permissions.\n\nA common misconception is that `TRUNCATE` can never be rolled back. In SQL Server and PostgreSQL it can, inside an explicit transaction; in MySQL and Oracle it commits implicitly. Say 'it depends on the database' rather than guessing.",
+          tip: "Naming the rollback nuance per database is what separates a careful answer from a memorised one.",
+          c: ["sql-basics", "transactions"],
+          d: 2,
+          choices: [
+            {
+              t: "`DELETE` removes chosen rows and fires triggers; `TRUNCATE` empties the table fast without a `WHERE`; `DROP` removes the table definition too",
+              ok: true,
+              why: "Correct — rows, all rows, table.",
+            },
+            {
+              t: "`TRUNCATE` accepts a `WHERE` clause and is simply a faster `DELETE`",
+              why: "`TRUNCATE` always empties the whole table.",
+            },
+            {
+              t: "`DROP` removes the rows but keeps the table structure for reuse",
+              why: "That describes `TRUNCATE`. `DROP` removes the structure as well.",
+            },
+            {
+              t: "`TRUNCATE` can never be rolled back in any database",
+              why: "SQL Server and PostgreSQL can roll it back inside a transaction; MySQL and Oracle commit implicitly.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -203,6 +229,32 @@ WHERE o.id {{2}} NULL;`,
             { t: "Aggregates can be used in WHERE", why: "They must go in HAVING." },
           ],
         }),
+        mcq("sql-join-union-all", {
+          q: "You combine this year's and last year's order tables, which cannot contain the same order twice. `UNION` or `UNION ALL`?",
+          why: "**`UNION ALL`.** `UNION` removes duplicate rows from the combined result, which forces the database to sort or hash the whole output to find them. `UNION ALL` simply appends one result to the other.\n\nWhen the inputs cannot overlap — as here — the de-duplication is pure cost with no effect on the result, and on large sets that cost is significant. Worse, if the rows *could* legitimately repeat (two identical line items, say), `UNION` would silently discard real data.\n\nSo the rule of thumb: default to `UNION ALL`, and use `UNION` only when you specifically want duplicates removed. Both require the same number of columns with compatible types, and the column names come from the first `SELECT`.\n\nNot to be confused with joins: `UNION` stacks rows vertically; a `JOIN` combines columns side by side.",
+          tip: "Stating 'UNION ALL by default, UNION only when you want de-duplication' shows you think about cost.",
+          c: ["sql-basics", "performance"],
+          d: 1,
+          choices: [
+            {
+              t: "`UNION ALL` — it skips the costly de-duplication, which cannot change the result here",
+              ok: true,
+              why: "Correct — no overlap, so removing duplicates is wasted work.",
+            },
+            {
+              t: "`UNION` — it is always faster because it produces fewer rows",
+              why: "Finding duplicates requires a sort or hash over everything; it is the slower of the two.",
+            },
+            {
+              t: "`UNION`, because `UNION ALL` requires the tables to have identical names",
+              why: "Both only require matching column count and compatible types.",
+            },
+            {
+              t: "Either — they are synonyms",
+              why: "`UNION` removes duplicate rows; `UNION ALL` keeps every row.",
+            },
+          ],
+        }),
       ],
     }),
 
@@ -293,6 +345,20 @@ Stronger isolation means more locking and less concurrency. Read Committed is th
           why: "It is a **trade-off**, not a mistake. Normalise by default — one fact in one place means one update — but denormalise deliberately when a measured read path demands it: a cached `order_count` on a customer row, or a stored `total` on an order so historical prices survive a later price change.\n\nThe cost is that duplicated data can drift, so you need a maintenance strategy (a trigger, an application-level update, or a scheduled reconciliation). The wrong version is *accidental* denormalisation — the same fact in three tables because nobody designed it.\n\nAnswering with 'it depends on the read/write ratio, and here's how I'd keep it consistent' is far stronger than a rule.",
           c: ["schema-design", "performance"],
           d: 3,
+        }),
+        multi("sql-des-pk-unique", {
+          q: "Which statements about primary keys and unique constraints are correct?",
+          why: "Correct: a table has **at most one primary key**, but can have **many unique constraints**; primary key columns **cannot be NULL**; and both are enforced with a unique index behind the scenes.\n\nThe primary key is *the* identity of a row — what foreign keys point at. A unique constraint expresses any other business rule about uniqueness: an email address, an SKU, a `(tenant_id, slug)` pair. A common design is a surrogate primary key (`id`) plus a unique constraint on the natural key.\n\nUnique constraints **can** include NULL columns, and how many NULLs are allowed varies by database: SQL Server allows only one NULL in a unique column, while PostgreSQL by default treats NULLs as distinct and allows many. In SQL Server the primary key also becomes the **clustered index** by default, unless you say otherwise or the table already has one.",
+          tip: "The NULL-handling difference between SQL Server and PostgreSQL is a detail interviewers love.",
+          c: ["schema-design", "indexing"],
+          d: 2,
+          choices: [
+            { t: "A table can have one primary key but several unique constraints", ok: true },
+            { t: "Primary key columns cannot contain NULL", ok: true },
+            { t: "Both are enforced using a unique index", ok: true },
+            { t: "A unique constraint column can never contain NULL", why: "NULLs are allowed; how many depends on the database." },
+            { t: "Only a primary key can be referenced by a foreign key", why: "A foreign key may reference any unique key, though the primary key is the usual target." },
+          ],
         }),
       ],
     }),
@@ -395,6 +461,32 @@ Wrapping an indexed column in a function makes the predicate **non-sargable** an
           c: ["indexing", "performance"],
           d: 3,
           secs: 180,
+        }),
+        mcq("sql-perf-clustered", {
+          q: "In SQL Server, what is the difference between a clustered and a non-clustered index?",
+          why: "A **clustered index is the table**: the rows themselves are stored in a B-tree ordered by the clustered key, so there can be only **one** per table. A **non-clustered index** is a separate B-tree holding the indexed columns plus a pointer to the full row — in a clustered table, that pointer is the clustered key. You can have many.\n\nThat pointer explains a classic performance issue: if a query uses a non-clustered index but needs columns it does not contain, SQL Server performs a **key lookup** into the clustered index for every matching row. For a handful of rows that is cheap; for thousands it can be slower than scanning. The fix is a **covering index**, adding the extra columns with `INCLUDE (...)` so the query is answered from the index alone.\n\nGood clustered keys are narrow, unique, stable and ever-increasing (an `int` identity is the textbook case), because every non-clustered index carries a copy of that key. A random GUID as the clustered key causes page splits and fragmentation on insert.\n\nThe primary key is clustered by default (when no clustered index exists yet), but the two are separate choices — you can declare `PRIMARY KEY NONCLUSTERED`.",
+          tip: "Mention key lookups and `INCLUDE` — it turns a definition into a tuning answer.",
+          c: ["indexing", "performance"],
+          d: 2,
+          choices: [
+            {
+              t: "The clustered index stores the rows themselves in key order (one per table); non-clustered indexes are separate structures pointing to the rows",
+              ok: true,
+              why: "Correct — and the pointer is why key lookups exist.",
+            },
+            {
+              t: "Clustered indexes are stored on several servers in a cluster",
+              why: "'Clustered' refers to how rows are physically ordered, not to server clusters.",
+            },
+            {
+              t: "A table can have several clustered indexes, one per frequently filtered column",
+              why: "The rows can only be stored in one order, so there is at most one.",
+            },
+            {
+              t: "Non-clustered indexes are always faster because they are smaller",
+              why: "Not when the query needs other columns — each match then costs a key lookup.",
+            },
+          ],
         }),
       ],
     }),
