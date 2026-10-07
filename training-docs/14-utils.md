@@ -96,6 +96,20 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 
 The `as Record<string, unknown>` cast is needed because TypeScript doesn't know the exact shape of `unknown` objects.
 
+**Two gaps worth knowing (verified 2026-10-06).** Step 4 only runs when *both* values are arrays. When one
+is an array and the other a plain object, both fall through to step 5, which compares `Object.keys`.
+So `deepEqual([], {})` and `deepEqual([1], { 0: 1 })` both return `true`: a solution that returns
+`{}` passes a test expecting `[]`. Separately, `deepEqual(NaN, NaN)` returns `false` because
+`NaN === NaN` is false and no later branch handles numbers. Neither case appears in the 20 seed
+problems today, but any problem whose expected output is an empty array is exposed to the first.
+
+**Exercise.** Goal: prove both gaps without installing anything, then propose the smallest fix.
+**Check:** from the project root run
+`node -e "const s=require('fs').readFileSync('src/lib/utils.ts','utf8');const m=s.match(/function deepEqual[\s\S]*?\n}/)[0].replace(/: unknown/g,'').replace('): boolean',')').replace(/ as Record<string, unknown>/g,'');const deepEqual=eval('('+m+')');console.log(deepEqual([],{}), deepEqual([1],{0:1}), deepEqual(NaN,NaN))"`
+and it prints `true true false`. A good fix adds `if (Array.isArray(a) !== Array.isArray(b)) return false;`
+before the array branch and `Number.isNaN(a) && Number.isNaN(b)` near the top; rerun the command to
+see `false false true`.
+
 ---
 
 ### Lines 44–46 — CSS Class Utility (`cn`)

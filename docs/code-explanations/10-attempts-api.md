@@ -63,7 +63,7 @@ if (!existingCard) {
 }
 ```
 
-The **user×problem** pair is the unique key for a card. `.get()` returns a single row or `undefined`. If no card exists (first time the user attempts this problem), we create a fresh FSRS card with default values (state=New, stability=0, difficulty=0).
+The **user×problem** pair is the logical key for a card, but only this code enforces it: `user_cards` has no unique index on that pair (`src/lib/db/schema.ts:83-98`). The lookup and insert are both synchronous better-sqlite3 calls with no `await` between them, so requests in one Node process cannot interleave here. `.get()` returns a single row or `undefined`. If no card exists (first time the user attempts this problem), we create a fresh FSRS card with default values (state=New, stability=0, difficulty=0).
 
 This is the **lazy initialization** pattern — we don't create cards for all 20 problems upfront, only when the user first encounters each one. This keeps the database lean and makes it trivial to add new problems.
 

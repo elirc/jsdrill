@@ -154,7 +154,7 @@ The `|| 1` default means if there's no tier progress record yet, the user starts
       return Math.random() - 0.5;
     });
 ```
-**Why this matters:** Lower-tier problems come first (master fundamentals before advancing), but within the same tier, the order is randomized. The `Math.random() - 0.5` trick produces a random sort because it returns positive or negative with equal probability.
+**Why this matters:** Lower-tier problems come first (master fundamentals before advancing), but within the same tier, the order is randomized. The `Math.random() - 0.5` comparator gives each comparison a random sign. That is not a uniform shuffle: sort algorithms assume a consistent comparator, and an inconsistent one produces a biased order (the Fisher-Yates `shuffle` below exists for exactly this reason). It is acceptable here because the whole queue is shuffled again at the end.
 
 ---
 

@@ -128,7 +128,7 @@ export const userCards = sqliteTable("user_cards", {
   lastReview: text("last_review"),
 });
 ```
-**Why this matters:** This is the **bridge between the app and the FSRS spaced repetition algorithm**. One row exists for each user-problem pair. Key fields:
+**Why this matters:** This is the **bridge between the app and the FSRS spaced repetition algorithm**. One row is meant to exist for each user-problem pair. Note that the schema does not enforce that: there is no unique index on `(user_id, problem_id)`. Uniqueness depends on the get-or-create code in `src/app/api/attempts/route.ts:48-79`, which is safe today only because better-sqlite3 calls are synchronous and nothing `await`s between the lookup and the insert, so two requests in one Node process cannot interleave there. A second server process, or a future `await` in that block, would allow duplicates. Key fields:
 
 - **`stability`** and **`difficulty`** — These are `real` (floating-point) numbers that the FSRS algorithm calculates. Stability represents how well the user knows this problem (higher = more remembered). Difficulty represents how hard the problem has been for this user.
 - **`due`** — An ISO date string indicating when this problem should be reviewed next. The session builder checks this to find "overdue" cards.
@@ -170,3 +170,4 @@ export const userTierProgress = sqliteTable("user_tier_progress", {
 3. The `userCards` table is the heart of the spaced repetition system
 4. Foreign keys + cascade deletes maintain referential integrity
 5. Composite primary keys on junction tables prevent duplicate relationships
+6. `user_cards` has no such constraint; the "one card per user and problem" rule lives only in application code

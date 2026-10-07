@@ -52,7 +52,7 @@ const scheduling = f.repeat(card, new Date());
 return scheduling[rating].card;
 ```
 
-`f.repeat()` returns a scheduling object with 4 possible futures — one for each rating. We pick the one matching our rating. The returned card has updated `stability`, `difficulty`, `due`, `reps`, and `state`. We don't need to understand the internal math — we just save the result.
+`f.repeat()` returns a scheduling object with 4 possible futures — one for each rating. We pick the one matching our rating. The returned card has updated `stability`, `difficulty`, `due`, `reps`, and `state`. We don't need to understand the internal math — we just save the result. One caveat: we save only seven of the card's fields. ts-fsrs 5.x cards also carry `learning_steps`, which this app never stores, so it is lost between reviews (see `training-docs/06-fsrs.md`).
 
 ---
 

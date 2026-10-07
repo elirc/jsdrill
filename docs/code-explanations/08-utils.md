@@ -81,7 +81,7 @@ The comparison order matters for performance:
 4. **Array check** — arrays get element-by-element comparison. Length check first (fast reject).
 5. **Object check** — keys are sorted before comparison so `{a: 1, b: 2}` equals `{b: 2, a: 1}`. Without sorting, key insertion order would matter.
 
-**Why not use a library?** Lodash's `_.isEqual` or fast-deep-equal would work, but adding a dependency for one function isn't worth it. Our implementation handles the types our test cases use (primitives, arrays, plain objects). It doesn't handle Maps, Sets, Dates, RegExps, or circular references — but our test cases never contain those.
+**Why not use a library?** Lodash's `_.isEqual` or fast-deep-equal would work, but adding a dependency for one function isn't worth it. Our implementation handles the types our test cases use (primitives, arrays, plain objects). It doesn't handle Maps, Sets, Dates, RegExps, or circular references — but our test cases never contain those. It also has two real gaps: an array and a plain object with the same keys compare equal (`deepEqual([], {})` is `true`), and `deepEqual(NaN, NaN)` is `false`. See `training-docs/14-utils.md` for a no-install check and the fix.
 
 ---
 

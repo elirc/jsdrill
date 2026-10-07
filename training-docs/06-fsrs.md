@@ -119,7 +119,8 @@ export function cardFromDb(row: {
 - **`new Date(row.due)`** — Parses the ISO string `"2024-03-15T10:00:00Z"` into a JavaScript `Date` object.
 - **`row.state as State`** — Type assertion: tells TypeScript to treat the integer as the `State` enum type. This is safe because we control what goes into the database.
 - **`row.lastReview ? new Date(row.lastReview) : undefined`** — Conditional conversion. `lastReview` is null for new cards that haven't been reviewed yet.
-- **`elapsed_days: 0, scheduled_days: 0`** — These are runtime-only fields that FSRS recalculates. We set them to 0 as placeholders.
+- **`elapsed_days: 0, scheduled_days: 0`** — Placeholders for fields the table does not store. `elapsed_days` is deprecated in ts-fsrs 5 and derived from `last_review`; `scheduled_days` is recomputed by `repeat`.
+- **What the cast hides (verified 2026-10-06).** The lockfile pins `ts-fsrs` 5.2.3, whose `Card` type also has a required `learning_steps: number` (the card's position in the short-term learning or relearning steps). `user_cards` has no column for it (`src/lib/db/schema.ts:83-98`), `cardToDb` drops it (lines 58-68), and `cardFromDb` never sets it. The `as Card` on line 55 is what lets TypeScript accept the incomplete object. So every review hands the scheduler a card whose step position is `undefined`. To see what that does, ts-fsrs 5.2.3 was run on its own (outside this repository) on 2026-10-06. With the default parameters this file uses (`fsrs()` on line 3: two learning steps, one relearning step), Again/Hard/Good sequences gave identical due dates whether `learning_steps` was kept, set to 0, or missing, so there is no visible bug today. With four learning steps (`1m, 10m, 1h, 4h`), four Good ratings in a row went 10m, 4h, then graduated when the field was kept, but stayed at the 60-minute step forever when it was lost. The gap is latent: it bites the day someone configures longer learning steps.
 
 ---
 
@@ -177,3 +178,9 @@ export function isOverdue(dueDate: string): boolean {
 3. `cardFromDb`/`cardToDb` handle the impedance mismatch between the library and SQLite
 4. The facade pattern isolates the FSRS library — only this file imports from `ts-fsrs`
 5. `f.repeat()` pre-calculates ALL possible outcomes; we just pick the one matching our rating
+6. A type assertion (`as Card`) turns a missing field into a silent runtime gap; prefer building the object without a cast so the compiler lists what is missing
+
+## Practice
+
+**Goal:** find every place a `Card` field is lost between the library and SQLite.
+**Check:** `grep -n "learning_steps" -r src` prints nothing, while the `ts-fsrs` 5.2.3 type definitions declare it on `Card`. Write down the three changes a fix needs (a column in `schema.ts`, a mapping in `cardToDb`, a mapping in `cardFromDb`) and the migration question it raises for cards already stored.

@@ -17,6 +17,16 @@ A Next.js app for deliberate JavaScript practice with spaced repetition, pattern
 - `seed-data`: Categories, patterns, and problem JSON
 - `docs` and `training-docs`: Architecture and implementation references
 
+## Learning Path
+
+Start with `training-docs/00-architecture-overview.md`, then read `training-docs/01` to `15` in order
+(schema, session builder, drill page, executor, attempts API, FSRS, and so on). Each has a
+`docs/code-explanations/` companion that is shorter and more conversational. Review notes added on
+2026-10-06 flag three verified gaps worth discussing in a code review: `deepEqual` treats `[]` and
+`{}` as equal (`training-docs/14-utils.md`, with a no-install check), the FSRS card never stores
+`learning_steps` (`training-docs/06-fsrs.md`), and `user_cards` has no unique index on
+`(user_id, problem_id)` (`training-docs/01-schema.md`). There are no automated tests in this repository.
+
 ## Local Development
 
 ```bash
